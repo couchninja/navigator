@@ -269,6 +269,8 @@ export class EarthSunViewer {
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.001, 1000);
     this.camera.position.set(0, 0, 1);
 
+    this.canvasHost.getBoundingClientRect();
+
     this.renderer = new WebGPURenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.canvasHost.appendChild(this.renderer.domElement);
@@ -310,6 +312,23 @@ export class EarthSunViewer {
     this.renderReady = true;
     this.onResize();
     this.animate();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        this.refreshCanvasCompositor();
+      });
+    });
+  }
+
+  private refreshCanvasCompositor(): void {
+    const canvas = this.renderer.domElement;
+    const parent = canvas.parentElement;
+    if (!parent) {
+      this.onResize();
+      return;
+    }
+    parent.removeChild(canvas);
+    parent.insertBefore(canvas, this.labelRenderer.domElement);
+    this.onResize();
   }
 
   setGeometryPollIntervalMs(intervalMs: number): void {

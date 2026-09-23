@@ -27,6 +27,22 @@ def build_web_viewer_if_ready() -> None:
         cwd=_WEB_VIEWER_DIR,
         check=True,
     )
+    _remove_standalone_viewer_shell_from_dist()
+
+
+def _remove_standalone_viewer_shell_from_dist() -> None:
+    dist = _WEB_VIEWER_DIR / "dist"
+    if not dist.is_dir():
+        return
+    for path in dist.iterdir():
+        if not path.is_file():
+            continue
+        name = path.name.lower()
+        if name == "index.html":
+            path.unlink()
+            continue
+        if name.endswith(".webmanifest") or name.startswith("workbox") or name in {"sw.js", "service-worker.js"}:
+            path.unlink()
 
 
 def _web_viewer_build_is_stale() -> bool:

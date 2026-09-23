@@ -50,6 +50,7 @@ WEB_PORT = web_port_for_platform(sys.platform)
 LOG_LINE_LIMIT = 200
 _STATUS_POLL_MS = 2000
 _VIEWER_DIST = Path(__file__).resolve().parent / "web_viewer" / "dist"
+_NO_STORE_HEADERS = {"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"}
 _COMPRESS_MIN_BYTES = 512
 _navigator_session_id: str | None = None
 
@@ -91,6 +92,8 @@ _INDEX_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <meta name="navigator-session" content="__NAVIGATOR_SESSION__">
   <title>Earth-sun viewer</title>
   <style>
     :root {
@@ -132,6 +135,8 @@ _INDEX_HTML = """<!DOCTYPE html>
       width: fit-content;
       max-width: 100%;
       min-height: 0;
+      position: relative;
+      z-index: 1;
       overflow-y: auto;
       padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
         max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
@@ -145,6 +150,9 @@ _INDEX_HTML = """<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      position: relative;
+      z-index: 0;
+      isolation: isolate;
     }
     #viewer-root {
       flex: 1 1 auto;
@@ -399,6 +407,14 @@ __TARGET_BUTTONS__
   </div>
   </div>
   <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        for (const reg of regs) {
+          void reg.unregister();
+        }
+      });
+    }
+
     const targetEl = document.getElementById("target");
     const speedEl = document.getElementById("speed");
     const logsEl = document.getElementById("logs");
@@ -469,6 +485,8 @@ __TARGET_BUTTONS__
     }
 
     let navigatorSession = null;
+    const pageNavigatorSession =
+      document.querySelector('meta[name="navigator-session"]')?.getAttribute("content") ?? null;
 
     async function refresh() {
       const url = logsOpen() ? "/api/status?logs=1" : "/api/status";
@@ -492,9 +510,17 @@ __TARGET_BUTTONS__
           logsEl.scrollTop = logsEl.scrollHeight;
         }
         if (navigatorSession === null) {
+          if (
+            pageNavigatorSession !== null &&
+            data.session !== pageNavigatorSession
+          ) {
+            location.reload();
+            return;
+          }
           navigatorSession = data.session;
         } else if (data.session !== navigatorSession) {
           location.reload();
+          return;
         }
         publishStatus(data);
       } catch {
@@ -615,6 +641,7 @@ def _index_html() -> str:
     session = navigator_session_id()
     return (
         _INDEX_HTML.replace("__VIEWER_SCRIPT__", f"/viewer.js?v={session}")
+        .replace("__NAVIGATOR_SESSION__", session)
         .replace("__POLL_MS__", str(_STATUS_POLL_MS))
         .replace("__TARGET_BUTTONS__", _target_buttons_html())
     )
@@ -755,12 +782,26 @@ def _apply_time_scale_preset(preset: str) -> None:
     set_time_scale_preset(preset)
 
 
+def _legacy_pwa_route(route: str) -> bool:
+    if route == "/manifest.webmanifest":
+        return True
+    if route in {"/sw.js", "/service-worker.js"}:
+        return True
+    name = route.lstrip("/").lower()
+    return name.startswith("workbox-")
+
+
 def _viewer_asset(path: str) -> tuple[bytes, str] | None:
     path = _request_path(path)
     if not path.startswith("/"):
         return None
     relative = path.lstrip("/")
     if not relative or any(part == ".." for part in relative.split("/")):
+        return None
+    leaf = relative.split("/")[-1].lower()
+    if leaf == "index.html" or leaf.endswith(".webmanifest") or leaf.startswith("workbox-"):
+        return None
+    if leaf in {"sw.js", "service-worker.js"}:
         return None
     file_path = (_VIEWER_DIST / relative).resolve()
     dist_root = _VIEWER_DIST.resolve()
@@ -801,6 +842,14 @@ def _http_response(
     return header.encode("ascii") + response_body
 
 
+def _http_redirect(location: str) -> bytes:
+    header = f"HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    return header.encode("ascii")
+
+
+_CLEAR_SW_HEADERS = {**_NO_STORE_HEADERS, "Clear-Site-Data": '"storage"'}
+
+
 async def _handle_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
@@ -817,7 +866,19 @@ async def _handle_client(
                     200,
                     body,
                     "text/html; charset=utf-8",
-                    extra_headers={"Cache-Control": "no-cache"},
+                    extra_headers=_NO_STORE_HEADERS,
+                    accept_encoding=accept_encoding,
+                )
+            )
+        elif route == "/index.html" and method == "GET":
+            writer.write(_http_redirect("/"))
+        elif method == "GET" and _legacy_pwa_route(route):
+            writer.write(
+                _http_response(
+                    404,
+                    b"removed",
+                    "text/plain",
+                    extra_headers=_CLEAR_SW_HEADERS,
                     accept_encoding=accept_encoding,
                 )
             )
@@ -828,7 +889,7 @@ async def _handle_client(
                     200,
                     body,
                     content_type,
-                    extra_headers={"Cache-Control": "no-cache"},
+                    extra_headers=_NO_STORE_HEADERS,
                     accept_encoding=accept_encoding,
                 )
             )
@@ -902,8 +963,7 @@ async def run_web_ui(buttons: ButtonTargetSource, log_buffer: LogBuffer) -> Asyn
         await _handle_client(reader, writer, buttons, log_buffer)
 
     server = await asyncio.start_server(client_handler, WEB_HOST, WEB_PORT)
-    addrs = ", ".join(str(sock.getsockname()) for sock in server.sockets or ())
-    print(f"Navigator web UI at http://{addrs}")
+    print(f"Navigator web UI at http://localhost:{WEB_PORT}")
     try:
         yield
     finally:

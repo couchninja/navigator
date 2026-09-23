@@ -33,7 +33,11 @@ def menu_without_gpio() -> Iterator[HostButtonMenu]:
 
 
 def test_index_html_includes_target_buttons() -> None:
+    begin_navigator_session()
     html = _index_html()
+    session = navigator_session_id()
+    assert f'name="navigator-session" content="{session}"' in html
+    assert f"/viewer.js?v={session}" in html
     for target in PointingTarget:
         assert f'data-target="{target.value}"' in html
         assert target.label in html
@@ -109,6 +113,13 @@ def test_viewer_asset_serves_earth_texture_from_dist() -> None:
 
 def test_viewer_asset_rejects_path_traversal() -> None:
     assert _viewer_asset("/textures/../web_ui.py") is None
+
+
+def test_viewer_asset_rejects_standalone_shell_files() -> None:
+    assert _viewer_asset("/index.html") is None
+    assert _viewer_asset("/manifest.webmanifest") is None
+    assert _viewer_asset("/workbox-deadbeef.js") is None
+    assert _viewer_asset("/sw.js") is None
 
 
 def test_navigator_session_changes_each_run() -> None:

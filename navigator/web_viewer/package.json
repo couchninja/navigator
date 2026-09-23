@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit --incremental && vite build",
+    "postbuild": "rm -f dist/index.html dist/*.webmanifest dist/workbox-*.js dist/sw.js dist/service-worker.js",
     "dev": "vite",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

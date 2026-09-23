@@ -1,6 +1,22 @@
 import { EarthSunViewer } from "./earth-sun-viewer";
 import type { SceneSnapshot } from "./scene-types";
 
+async function unregisterServiceWorkers(): Promise<boolean> {
+  if (!("serviceWorker" in navigator)) {
+    return false;
+  }
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  if (registrations.length === 0) {
+    return false;
+  }
+  await Promise.all(registrations.map((registration) => registration.unregister()));
+  return true;
+}
+
+function navigatorAppShellPresent(): boolean {
+  return document.querySelector(".app-shell") !== null;
+}
+
 const SCENE_POLL_REALTIME_MS = 10_000;
 const SCENE_POLL_FAST_MS = 1000 / 30;
 
@@ -114,15 +130,41 @@ function navigatorStatusFromDetail(detail: unknown): NavigatorWebStatus | null {
 export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
   mountStyles();
   const viewer = new EarthSunViewer(mount);
-  viewer.setGeometryPollIntervalMs(SCENE_POLL_FAST_MS);
+  viewer.setGeometryPollIntervalMs(SCENE_POLL_REALTIME_MS);
 
-  let scenePollMs = SCENE_POLL_FAST_MS;
+  let scenePollMs = SCENE_POLL_REALTIME_MS;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollGeneration = 0;
   let inFlight = false;
+  let scenePollingActive = false;
   let lastPointingTarget: string | null = null;
   const sidebarLegacyOrbits = document.getElementById("legacy-orbit-lines-control");
   let includeEphemerisOrbitPaths =
     sidebarLegacyOrbits instanceof HTMLInputElement ? sidebarLegacyOrbits.checked : false;
+
+  const stopScenePollLoop = (): void => {
+    pollGeneration += 1;
+    if (pollTimer !== null) {
+      window.clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const scheduleNextScenePoll = (): void => {
+    const generation = pollGeneration;
+    pollTimer = window.setTimeout(() => {
+      pollTimer = null;
+      if (generation !== pollGeneration) {
+        return;
+      }
+      void pollScene().finally(() => {
+        if (generation !== pollGeneration) {
+          return;
+        }
+        scheduleNextScenePoll();
+      });
+    }, scenePollMs);
+  };
 
   const applyScenePollMs = (nextMs: number): void => {
     if (nextMs === scenePollMs) {
@@ -130,28 +172,10 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
     }
     scenePollMs = nextMs;
     viewer.setGeometryPollIntervalMs(nextMs);
-    if (pollTimer !== null) {
-      window.clearTimeout(pollTimer);
-      pollTimer = null;
+    if (scenePollingActive) {
+      stopScenePollLoop();
       scheduleNextScenePoll();
     }
-  };
-
-  const applyNavigatorStatus = (detail: unknown): void => {
-    const status = navigatorStatusFromDetail(detail);
-    if (status === null) {
-      return;
-    }
-    applyScenePollMs(scenePollIntervalMs(status.time_scale.preset));
-    if (lastPointingTarget !== null && lastPointingTarget !== status.target) {
-      void pollScene();
-    }
-    lastPointingTarget = status.target;
-    viewer.applyNavigatorStatus({
-      target: status.target,
-      timeIso: status.time_scale.time_iso ?? null,
-      timeScaling: status.time_scale.time_scaling ?? 1,
-    });
   };
 
   const pollScene = async (): Promise<void> => {
@@ -169,23 +193,38 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
     }
   };
 
-  const scheduleNextScenePoll = (): void => {
-    pollTimer = window.setTimeout(() => {
-      pollTimer = null;
-      void pollScene().finally(() => {
-        scheduleNextScenePoll();
-      });
-    }, scenePollMs);
+  const beginScenePolling = (): void => {
+    if (scenePollingActive) {
+      return;
+    }
+    scenePollingActive = true;
+    void pollScene().finally(() => {
+      scheduleNextScenePoll();
+    });
+  };
+
+  const applyNavigatorStatus = (detail: unknown): void => {
+    const status = navigatorStatusFromDetail(detail);
+    if (status === null) {
+      return;
+    }
+    applyScenePollMs(scenePollIntervalMs(status.time_scale.preset));
+    if (lastPointingTarget !== null && lastPointingTarget !== status.target) {
+      void pollScene();
+    }
+    lastPointingTarget = status.target;
+    viewer.applyNavigatorStatus({
+      target: status.target,
+      timeIso: status.time_scale.time_iso ?? null,
+      timeScaling: status.time_scale.time_scaling ?? 1,
+    });
+    beginScenePolling();
   };
 
   window.addEventListener("navigator-status", (event) => {
     applyNavigatorStatus((event as CustomEvent).detail);
   });
   applyNavigatorStatus((window as Window & { __navigatorLastStatus?: unknown }).__navigatorLastStatus);
-
-  void pollScene().finally(() => {
-    scheduleNextScenePoll();
-  });
 
   if (sidebarLegacyOrbits instanceof HTMLInputElement) {
     sidebarLegacyOrbits.addEventListener("change", () => {
@@ -209,7 +248,60 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
   return viewer;
 }
 
-const mount = document.getElementById("viewer-root");
-if (mount) {
-  startEarthSunViewer(mount);
+let earthSunViewerMounted = false;
+
+function mountEarthSunViewerWhenLaidOut(): void {
+  if (earthSunViewerMounted) {
+    return;
+  }
+  const mount = document.getElementById("viewer-root");
+  if (!mount) {
+    return;
+  }
+  earthSunViewerMounted = true;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      startEarthSunViewer(mount);
+    });
+  });
 }
+
+async function mountEarthSunViewerWhenReady(): Promise<void> {
+  if (await unregisterServiceWorkers()) {
+    location.reload();
+    return;
+  }
+  if (!navigatorAppShellPresent()) {
+    const path = window.location.pathname;
+    if (path !== "/" && path !== "") {
+      location.replace("/");
+      return;
+    }
+    const retried = sessionStorage.getItem("navigator-shell-retry");
+    if (retried === null) {
+      sessionStorage.setItem("navigator-shell-retry", "1");
+      location.replace(`/?navigator_shell=${Date.now()}`);
+      return;
+    }
+    return;
+  }
+  sessionStorage.removeItem("navigator-shell-retry");
+
+  const lastStatus = (window as Window & { __navigatorLastStatus?: unknown }).__navigatorLastStatus;
+  if (lastStatus !== undefined) {
+    mountEarthSunViewerWhenLaidOut();
+    return;
+  }
+  window.addEventListener(
+    "navigator-status",
+    () => {
+      mountEarthSunViewerWhenLaidOut();
+    },
+    { once: true },
+  );
+  window.setTimeout(() => {
+    mountEarthSunViewerWhenLaidOut();
+  }, 2500);
+}
+
+void mountEarthSunViewerWhenReady();
