@@ -265,6 +265,7 @@ _INDEX_HTML = """<!DOCTYPE html>
       max-width: 100%;
     }
     button.time-scale {
+      margin: 0;
       padding: 0.75rem 0.5rem;
       font-size: 0.8125rem;
       font-weight: 600;
