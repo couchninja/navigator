@@ -17,5 +17,9 @@ jobs:
         with:
           cache: true
 
+      - name: Install web viewer npm dependencies
+        working-directory: navigator/web_viewer
+        run: pixi run npm install
+
       - name: Run tests (offline and online)
         run: pixi run test
