@@ -360,6 +360,34 @@ _INDEX_HTML = """<!DOCTYPE html>
     .server-status.disconnected .server-status-dot {
       background: #f08080;
     }
+    button.viewer-fullscreen-toggle {
+      position: absolute;
+      top: max(8px, env(safe-area-inset-top));
+      right: max(8px, env(safe-area-inset-right));
+      z-index: 10;
+      margin: 0;
+      padding: 0.45rem 0.65rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      border: 1px solid rgba(61, 156, 240, 0.45);
+      border-radius: 8px;
+      background: rgba(26, 35, 50, 0.88);
+      color: var(--text);
+      cursor: pointer;
+      touch-action: manipulation;
+      backdrop-filter: blur(6px);
+    }
+    button.viewer-fullscreen-toggle:active {
+      opacity: 0.85;
+    }
+    .app-shell.viewer-fullscreen .app-controls {
+      display: none;
+    }
+    .app-shell.viewer-fullscreen .app-viewer {
+      flex: 1 1 auto;
+      max-height: none;
+      order: unset;
+    }
   </style>
 </head>
 <body>
@@ -403,6 +431,13 @@ __TARGET_BUTTONS__
   </details>
   </div>
   <div class="app-viewer">
+  <button
+    type="button"
+    class="viewer-fullscreen-toggle"
+    id="viewer-fullscreen-toggle"
+    aria-pressed="false"
+    aria-label="Hide controls and expand viewer"
+  >Fullscreen</button>
   <div id="viewer-root"></div>
   <script type="module" src="__VIEWER_SCRIPT__"></script>
   </div>
@@ -424,6 +459,24 @@ __TARGET_BUTTONS__
     const serverStatusTextEl = document.getElementById("server-status-text");
     const timeScaleButtons = document.querySelectorAll("button.time-scale");
     const targetButtons = document.querySelectorAll("button.target-btn");
+    const appShell = document.querySelector(".app-shell");
+    const viewerFullscreenToggle = document.getElementById("viewer-fullscreen-toggle");
+
+    function setViewerFullscreen(on) {
+      appShell.classList.toggle("viewer-fullscreen", on);
+      viewerFullscreenToggle.setAttribute("aria-pressed", on ? "true" : "false");
+      if (on) {
+        viewerFullscreenToggle.textContent = "×";
+        viewerFullscreenToggle.setAttribute("aria-label", "Show controls");
+      } else {
+        viewerFullscreenToggle.textContent = "Fullscreen";
+        viewerFullscreenToggle.setAttribute("aria-label", "Hide controls and expand viewer");
+      }
+    }
+
+    viewerFullscreenToggle.addEventListener("click", () => {
+      setViewerFullscreen(!appShell.classList.contains("viewer-fullscreen"));
+    });
 
     function applyTargetUi(data) {
       targetEl.textContent = data.target_label;
