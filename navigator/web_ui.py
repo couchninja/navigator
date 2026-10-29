@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
-from astropy import units as u
-
+from navigator.observer_speed import observer_speed_km_h
 from simulate.astronomy.constants import PointingTarget
 from simulate.astronomy.simulation_clock import (
     set_time_scale_preset,
@@ -23,7 +22,6 @@ from simulate.astronomy.simulation_clock import (
     sync_to_realtime,
     time_scale_status_payload,
 )
-from simulate.astronomy.utils.ephemeris import observer_surface_vector_and_euler_angles_for_target
 from simulate.astronomy.web_scene import scene_snapshot_payload
 
 if TYPE_CHECKING:
@@ -60,15 +58,6 @@ _NO_COMPRESS_CONTENT_TYPES = frozenset(
         "image/png",
         "image/gif",
         "image/webp",
-    }
-)
-
-_BODY_TARGETS = frozenset(
-    {
-        PointingTarget.SUN,
-        PointingTarget.MOON,
-        PointingTarget.MILKY_WAY_CENTER,
-        PointingTarget.ISS,
     }
 )
 
@@ -734,11 +723,7 @@ def _status_payload(
     include_logs: bool,
 ) -> dict[str, object]:
     target = buttons.selected_button["target"]
-    _surface, _euler, speed_au_s = observer_surface_vector_and_euler_angles_for_target(simulation_time(), target)
-    speed_km_h: float | None = None
-    if target not in _BODY_TARGETS:
-        speed_km_s = speed_au_s * (1 * u.au).to_value(u.km)
-        speed_km_h = float(speed_km_s * 3600.0)
+    speed_km_h = observer_speed_km_h(simulation_time(), target)
     payload: dict[str, object] = {
         "target": target.value,
         "target_label": target.label,

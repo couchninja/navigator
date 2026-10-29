@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
@@ -14,6 +15,7 @@ from gpio.button_menu_host import HostButtonMenu
 if TYPE_CHECKING:
     from gpio.button_menu import ButtonMenu
     from gpio.button_menu_host import HostButtonMenu
+    from gpio.observer_speed_lcd import ObserverSpeedLcd
 
     ButtonTargetSource = ButtonMenu | HostButtonMenu
 from navigator.system_clock import clock_is_synchronized
@@ -39,6 +41,7 @@ MIN_TARGET_ANGLE_DELTA = 1
 # Make sure this matches the ports in pybricks_hub/thin_ble_hub.py and the script is on the brick
 EXTERNAL_MOTOR_PORT = Port.D
 SENSOR_PORT = Port.C
+LCD_ENABLED = True
 
 _last_target_angles: dict[str, float] = {}
 
@@ -236,24 +239,41 @@ def gpio_available() -> bool:
     return sys.platform != "darwin"
 
 
-async def run_navigator_loop(buttons: ButtonTargetSource, log_buffer: LogBuffer, *, upload_program: bool) -> None:
+async def run_navigator_loop(
+    buttons: ButtonTargetSource,
+    log_buffer: LogBuffer,
+    *,
+    upload_program: bool,
+    lcd: ObserverSpeedLcd | None = None,
+) -> None:
+    from gpio.observer_speed_lcd import ObserverSpeedLcd, run_lcd_refresh
+
     refresh_astronomy_downloads(allow_network=False)
     program = "pybricks_hub/thin_ble_hub.py" if upload_program else None
 
     async with AsyncExitStack() as outer_stack:
         await outer_stack.enter_async_context(run_web_ui(buttons, log_buffer))
-        while True:
-            buttons.reset()
-            buttons.set_inputs_enabled(False)
-            try:
-                async with AsyncExitStack() as hub_stack:
-                    hub = await connect_and_calibrate(hub_stack, buttons, program)
-                    buttons.reset()
-                    buttons.set_inputs_enabled(True)
-                    await run_selection_loop(hub, buttons)
-            except RECOVERABLE_ERRORS as exc:
-                print(f"Hub lost ({format_error(exc)}); searching again...")
-                await asyncio.sleep(RECONNECT_DELAY_S)
+        lcd_task: asyncio.Task[None] | None = None
+        if isinstance(lcd, ObserverSpeedLcd):
+            lcd_task = asyncio.create_task(run_lcd_refresh(lcd, buttons))
+        try:
+            while True:
+                buttons.reset()
+                buttons.set_inputs_enabled(False)
+                try:
+                    async with AsyncExitStack() as hub_stack:
+                        hub = await connect_and_calibrate(hub_stack, buttons, program)
+                        buttons.reset()
+                        buttons.set_inputs_enabled(True)
+                        await run_selection_loop(hub, buttons)
+                except RECOVERABLE_ERRORS as exc:
+                    print(f"Hub lost ({format_error(exc)}); searching again...")
+                    await asyncio.sleep(RECONNECT_DELAY_S)
+        finally:
+            if lcd_task is not None:
+                lcd_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await lcd_task
 
 
 async def navigator_main(upload_program: bool = False) -> None:
@@ -264,9 +284,16 @@ async def navigator_main(upload_program: bool = False) -> None:
 
     if gpio_available():
         from gpio.button_menu import ButtonMenu
+        from gpio.i2c_host import require_i2c_tools
+        from gpio.observer_speed_lcd import ObserverSpeedLcd
 
-        with ButtonMenu() as buttons, capture_stdout(log_buffer):
-            await run_navigator_loop(buttons, log_buffer, upload_program=upload_program)
+        if LCD_ENABLED:
+            require_i2c_tools()
+        lcd_ctx: contextlib.AbstractContextManager[ObserverSpeedLcd | None] = (
+            ObserverSpeedLcd() if LCD_ENABLED else contextlib.nullcontext(None)
+        )
+        with ButtonMenu() as buttons, lcd_ctx as lcd, capture_stdout(log_buffer):
+            await run_navigator_loop(buttons, log_buffer, upload_program=upload_program, lcd=lcd)
         return
 
     print("Navigator (GPIO disabled on macOS; using web UI for target selection)")

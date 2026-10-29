@@ -35,6 +35,8 @@ wifi-off = "sudo nmcli radio wifi off"
 wifi-on = "sudo nmcli radio wifi on"
 
 wifi-list = "nmcli -f NAME,UUID,TYPE,DEVICE,STATE,AUTOCONNECT,AUTOCONNECT-PRIORITY connection"
+lcd-test = "python tests/lcd_test_main.py"
+lcd-scan = "i2cdetect -y 1"
 
 [dependencies]
 micropython = ">=1.28.0,<2"
@@ -59,6 +61,7 @@ pytest-socket = ">=0.8.1, <0.9"
 
 [target.linux.pypi-dependencies]
 gpiod = ">=2.5.0, <3"
+smbus2 = ">=0.4.3, <0.6"
 
 
 # pybricks-ble depends on an old pybricks-api git commit (3.6.1). Without this

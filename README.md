@@ -18,6 +18,43 @@ On raspberry + ubuntu, when the agent calls the terminal, the commands would han
 - In order to use the pins (gpiod) without sudo:
   - ```sudo usermod -aG dialout "$USER"```
   - reboot
+
+## 16×2 LCD + HW-061 I2C
+
+Adjust the blue contrast pot on the module if the module lights up but without visible text.
+
+### Wiring (Raspberry Pi 40-pin header)
+
+The LCD module’s four pins go to **3.3 V I2C** on the Pi. They do not share any GPIO lines with the button panel.
+
+```
+Raspberry Pi                         HW-061 module
+┌──────────────┐                    GND  VCC  SDA  SCL
+│ Pin 2  (5V)  ├──────────────────► VCC
+│ Pin 6  (GND) ├──────────────────► GND
+│ Pin 3  (SDA) ├──────────────────► SDA   (GPIO2)
+│ Pin 5  (SCL) ├──────────────────► SCL   (GPIO3)
+└──────────────┘                         │
+                                    16×2 LCD
+```
+
+### Enable I2C
+
+On Raspberry Pi OS / Ubuntu for Pi, enable the I2C controller and add your user to the `i2c` group:
+
+```sh
+sudo apt install i2c-tools
+sudo usermod -aG i2c "$USER"    # then log out and back in
+```
+
+Scan for the backpack (address is usually **0x27** or **0x3f**):
+
+```sh
+pixi run lcd-scan
+```
+
+If the address is not `0x27`, set `_LCD_ADDRESS` in `observer_speed_lcd.py`
+
 ## WiFi
 - raspberry pi 4b does not want to reliably connect to lego brick over BLE if wifi is turned on: connect to raspberry over ethernet. It does not seem needed to turn off the wifi.
 - update: I reconnected over wifi, and BLE connectivity seems fine; keep an eye on it
