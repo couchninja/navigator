@@ -6,7 +6,7 @@ Wants=bluetooth.service
 [Service]
 Type=simple
 WorkingDirectory=@REPO_ROOT@
-Environment=PATH=@PIXI_BIN@:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=@PIXI_BIN@:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHONUNBUFFERED=1
 ExecStart=@PIXI_BIN@/pixi run nav
 Restart=on-failure
