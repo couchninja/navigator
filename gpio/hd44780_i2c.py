@@ -15,6 +15,7 @@ _MASK_BACKLIGHT = 0x08
 _CMD_CLEAR = 0x01
 _CMD_HOME = 0x02
 _CMD_ENTRY_MODE = 0x06
+_CMD_DISPLAY_OFF = 0x08
 _CMD_DISPLAY_ON = 0x0C
 _CMD_FUNCTION_SET = 0x28
 
@@ -38,7 +39,12 @@ class Hd44780I2c:
         self._bus = SMBus(bus)
 
     def close(self) -> None:
+        self.display_off()
+        self.set_backlight(False)
         self._bus.close()
+
+    def display_off(self) -> None:
+        self._command(_CMD_DISPLAY_OFF)
 
     def init(self) -> None:
         time.sleep(0.05)

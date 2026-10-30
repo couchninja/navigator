@@ -9,6 +9,8 @@ WorkingDirectory=@REPO_ROOT@
 Environment=PATH=@PIXI_BIN@:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHONUNBUFFERED=1
 ExecStart=@PIXI_BIN@/pixi run nav
+# After the nav process exits; ExecStop would run while the refresh loop can still drive the LCD.
+ExecStopPost=-@PIXI_BIN@/pixi run lcd-power-off
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:@REPO_ROOT@/logs/navigator.log

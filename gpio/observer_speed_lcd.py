@@ -16,6 +16,11 @@ def lcd_i2c_address() -> int:
     return _LCD_ADDRESS
 
 
+def power_off_lcd(*, bus: int = _DEFAULT_BUS, address: int | None = None) -> None:
+    addr = lcd_i2c_address() if address is None else address
+    Hd44780I2c(bus=bus, address=addr).close()
+
+
 class ObserverSpeedLcd(ObserverSpeedDisplay):
     def __init__(
         self,
@@ -33,7 +38,6 @@ class ObserverSpeedLcd(ObserverSpeedDisplay):
 
     def __exit__(self, *exc: object) -> None:
         self._lcd.clear()
-        self._lcd.set_backlight(False)
         self._lcd.close()
 
     def show_target(self, target: PointingTarget, time: Time | None = None) -> None:
