@@ -11,9 +11,9 @@ from collections import deque
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
+from gpio.button_menu import ButtonMenu
 from navigator.observer_speed import observer_speed_km_h
 from simulate.astronomy.constants import PointingTarget
 from simulate.astronomy.simulation_clock import (
@@ -24,13 +24,7 @@ from simulate.astronomy.simulation_clock import (
 )
 from simulate.astronomy.web_scene import scene_snapshot_payload
 
-if TYPE_CHECKING:
-    from gpio.button_menu import ButtonMenu
-    from gpio.button_menu_host import HostButtonMenu
-
-    ButtonTargetSource = ButtonMenu | HostButtonMenu
-else:
-    ButtonTargetSource = object
+ButtonTargetSource = ButtonMenu
 
 WEB_HOST = "0.0.0.0"
 WEB_PORT_LINUX = 8765

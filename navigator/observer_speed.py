@@ -25,12 +25,12 @@ def observer_speed_km_h(time: Time, target: PointingTarget) -> float | None:
     return float(speed_km_s * 3600.0)
 
 
-_LCD_COLS = 16
+_DISPLAY_LINE_COLS = 16
 
 
-def observer_speed_lcd_lines(time: Time, target: PointingTarget) -> tuple[str, str]:
-    line1 = target.label[:_LCD_COLS]
+def observer_speed_display_lines(time: Time, target: PointingTarget) -> tuple[str, str]:
+    line1 = target.label[:_DISPLAY_LINE_COLS]
     speed_km_h = observer_speed_km_h(time, target)
     if speed_km_h is None:
         return line1, ""
-    return line1, f"{speed_km_h:.2f} km/h"[:_LCD_COLS]
+    return line1, f"{speed_km_h:.2f} km/h"[:_DISPLAY_LINE_COLS]

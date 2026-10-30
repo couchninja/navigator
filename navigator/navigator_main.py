@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
@@ -10,14 +9,11 @@ from typing import TYPE_CHECKING
 from pybricks.parameters import Port
 
 from gpio.button_config import ButtonData, PanelStatus
-from gpio.button_menu_host import HostButtonMenu
+from gpio.button_menu import ButtonMenu
+from gpio.observer_speed_display import ObserverSpeedDisplay, run_observer_speed_refresh
 
 if TYPE_CHECKING:
-    from gpio.button_menu import ButtonMenu
-    from gpio.button_menu_host import HostButtonMenu
-    from gpio.observer_speed_lcd import ObserverSpeedLcd
-
-    ButtonTargetSource = ButtonMenu | HostButtonMenu
+    ButtonTargetSource = ButtonMenu
 from navigator.system_clock import clock_is_synchronized
 from navigator.web_ui import LogBuffer, begin_navigator_session, capture_stdout, run_web_ui
 from navigator.web_viewer_build import build_web_viewer_if_ready
@@ -41,7 +37,8 @@ MIN_TARGET_ANGLE_DELTA = 1
 # Make sure this matches the ports in pybricks_hub/thin_ble_hub.py and the script is on the brick
 EXTERNAL_MOTOR_PORT = Port.D
 SENSOR_PORT = Port.C
-LCD_ENABLED = True
+# On Linux with GPIO, use the I2C LCD; otherwise observer speed goes to the console.
+I2C_SPEED_LCD = True
 
 _last_target_angles: dict[str, float] = {}
 
@@ -244,18 +241,14 @@ async def run_navigator_loop(
     log_buffer: LogBuffer,
     *,
     upload_program: bool,
-    lcd: ObserverSpeedLcd | None = None,
+    speed_display: ObserverSpeedDisplay,
 ) -> None:
-    from gpio.observer_speed_lcd import ObserverSpeedLcd, run_lcd_refresh
-
     refresh_astronomy_downloads(allow_network=False)
     program = "pybricks_hub/thin_ble_hub.py" if upload_program else None
 
     async with AsyncExitStack() as outer_stack:
         await outer_stack.enter_async_context(run_web_ui(buttons, log_buffer))
-        lcd_task: asyncio.Task[None] | None = None
-        if isinstance(lcd, ObserverSpeedLcd):
-            lcd_task = asyncio.create_task(run_lcd_refresh(lcd, buttons))
+        refresh_task = asyncio.create_task(run_observer_speed_refresh(speed_display, buttons))
         try:
             while True:
                 buttons.reset()
@@ -270,10 +263,9 @@ async def run_navigator_loop(
                     print(f"Hub lost ({format_error(exc)}); searching again...")
                     await asyncio.sleep(RECONNECT_DELAY_S)
         finally:
-            if lcd_task is not None:
-                lcd_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await lcd_task
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
 
 
 async def navigator_main(upload_program: bool = False) -> None:
@@ -283,22 +275,24 @@ async def navigator_main(upload_program: bool = False) -> None:
     log_buffer = LogBuffer()
 
     if gpio_available():
-        from gpio.button_menu import ButtonMenu
-        from gpio.i2c_host import require_i2c_tools
-        from gpio.observer_speed_lcd import ObserverSpeedLcd
+        from gpio.button_menu_gpio import ButtonMenuGpio
 
-        if LCD_ENABLED:
+        menu = ButtonMenuGpio()
+        if I2C_SPEED_LCD:
+            from gpio.i2c_host import require_i2c_tools
+            from gpio.observer_speed_lcd import ObserverSpeedLcd
+
             require_i2c_tools()
-        lcd_ctx: contextlib.AbstractContextManager[ObserverSpeedLcd | None] = (
-            ObserverSpeedLcd() if LCD_ENABLED else contextlib.nullcontext(None)
-        )
-        with ButtonMenu() as buttons, lcd_ctx as lcd, capture_stdout(log_buffer):
-            await run_navigator_loop(buttons, log_buffer, upload_program=upload_program, lcd=lcd)
-        return
+            speed_display: ObserverSpeedDisplay = ObserverSpeedLcd()
+        else:
+            speed_display = ObserverSpeedDisplay()
+    else:
+        print("Navigator (GPIO disabled on macOS; using web UI for target selection)")
+        menu = ButtonMenu()
+        speed_display = ObserverSpeedDisplay()
 
-    print("Navigator (GPIO disabled on macOS; using web UI for target selection)")
-    with HostButtonMenu() as buttons, capture_stdout(log_buffer):
-        await run_navigator_loop(buttons, log_buffer, upload_program=upload_program)
+    with menu as buttons, speed_display as display, capture_stdout(log_buffer):
+        await run_navigator_loop(buttons, log_buffer, upload_program=upload_program, speed_display=display)
 
 
 if __name__ == "__main__":

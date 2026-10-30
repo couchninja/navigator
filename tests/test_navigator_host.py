@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,9 +19,16 @@ async def test_navigator_main_uses_host_buttons_and_hub_loop_on_darwin() -> None
         patch.object(nav, "build_web_viewer_if_ready"),
         patch.object(nav, "begin_navigator_session"),
         patch.object(nav, "run_navigator_loop", new=AsyncMock()) as hub_loop,
-        patch.object(nav, "HostButtonMenu") as host_menu_cls,
+        patch.object(nav, "ButtonMenu") as menu_cls,
+        patch.object(nav, "ObserverSpeedDisplay") as display_cls,
     ):
-        host_menu_cls.return_value.__enter__.return_value = object()
+        menu = MagicMock()
+        menu_cls.return_value = menu
+        menu.__enter__.return_value = object()
+        display = MagicMock()
+        display_cls.return_value = display
+        display.__enter__.return_value = MagicMock()
         await nav.navigator_main()
-    host_menu_cls.assert_called_once()
+    menu_cls.assert_called_once()
+    display_cls.assert_called_once()
     hub_loop.assert_awaited_once()

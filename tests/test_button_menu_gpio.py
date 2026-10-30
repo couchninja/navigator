@@ -1,4 +1,4 @@
-"""Button menu selection logic, exercised without GPIO hardware."""
+"""ButtonMenuGpio selection and LED logic with mocked gpiod."""
 
 import asyncio
 from collections.abc import Iterator
@@ -14,9 +14,9 @@ from gpio.button_menu import (
     DEFAULT_BUTTON_INDEX,
     HUB_CALIBRATE_BUTTON_INDEX,
     HUB_SEARCH_BUTTON_INDEX,
-    ButtonMenu,
     PanelStatus,
 )
+from gpio.button_menu_gpio import ButtonMenuGpio
 from simulate.astronomy.constants import PointingTarget
 
 WAIT_TIMEOUT_S = 1.0
@@ -57,9 +57,9 @@ class FakeRequest:
 
 
 @contextmanager
-def fake_menu() -> Iterator[tuple[ButtonMenu, FakeRequest]]:
+def fake_menu() -> Iterator[tuple[ButtonMenuGpio, FakeRequest]]:
     request = FakeRequest()
-    with patch.object(gpiod, "request_lines", return_value=request), ButtonMenu() as menu:
+    with patch.object(gpiod, "request_lines", return_value=request), ButtonMenuGpio() as menu:
         yield menu, request
 
 
