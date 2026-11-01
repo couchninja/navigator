@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
@@ -41,6 +42,10 @@ SENSOR_PORT = Port.C
 I2C_SPEED_LCD = True
 
 _last_target_angles: dict[str, float] = {}
+
+
+class ShutdownRequested(Exception):
+    pass
 
 
 def clamp_yaw(yaw: float) -> float:
@@ -129,17 +134,25 @@ async def connected_hub(
     program: str | None,
     *,
     panel_status: PanelStatus | None = None,
+    stop: asyncio.Event | None = None,
 ) -> AsyncIterator[MoveHub]:
     async with AsyncExitStack() as stack:
-        while True:
+        while stop is None or not stop.is_set():
             if panel_status is not None:
                 panel_status.clock_synchronized = clock_is_synchronized()
             try:
                 hub = await stack.enter_async_context(MoveHub.connect(program=program, retries=1))
                 break
             except RECOVERABLE_ERRORS as exc:
+                if stop is not None and stop.is_set():
+                    raise ShutdownRequested from exc
                 print(f"Connection failed ({format_error(exc)}); searching again...")
-                await asyncio.sleep(RECONNECT_DELAY_S)
+                if stop is None:
+                    await asyncio.sleep(RECONNECT_DELAY_S)
+                else:
+                    await _sleep_or_stop(stop, RECONNECT_DELAY_S)
+        if stop is not None and stop.is_set():
+            raise ShutdownRequested
         yield hub
 
 
@@ -156,29 +169,52 @@ def resume_after_clock_sync() -> None:
     _last_target_angles.clear()
 
 
-async def wait_for_clock_sync_panel(buttons: ButtonTargetSource) -> None:
+async def wait_for_clock_sync_panel(
+    buttons: ButtonTargetSource,
+    *,
+    stop: asyncio.Event | None = None,
+) -> None:
     async with buttons.panel_status() as status:
         status.hub = "ready"
         while not clock_is_synchronized():
+            if stop is not None and stop.is_set():
+                return
             status.clock_synchronized = False
-            await asyncio.sleep(CLOCK_WAIT_POLL_S)
+            if stop is None:
+                await asyncio.sleep(CLOCK_WAIT_POLL_S)
+            else:
+                await _sleep_or_stop(stop, CLOCK_WAIT_POLL_S)
         status.clock_synchronized = True
 
 
-async def connect_and_calibrate(hub_stack: AsyncExitStack, buttons: ButtonTargetSource, program: str | None) -> MoveHub:
+async def connect_and_calibrate(
+    hub_stack: AsyncExitStack,
+    buttons: ButtonTargetSource,
+    program: str | None,
+    *,
+    stop: asyncio.Event,
+) -> MoveHub:
     async with buttons.panel_status() as status:
         hub: MoveHub | None = None
         calibrated = False
-        while True:
+        while not stop.is_set():
             status.clock_synchronized = clock_is_synchronized()
             if hub is None:
                 status.hub = "disconnected"
                 try:
-                    hub = await hub_stack.enter_async_context(connected_hub(program, panel_status=status))
+                    hub = await hub_stack.enter_async_context(
+                        connected_hub(program, panel_status=status, stop=stop)
+                    )
+                except ShutdownRequested:
+                    raise
                 except RECOVERABLE_ERRORS as exc:
+                    if stop.is_set():
+                        raise ShutdownRequested from exc
                     print(f"Connection failed ({format_error(exc)}); searching again...")
-                    await asyncio.sleep(RECONNECT_DELAY_S)
+                    await _sleep_or_stop(stop, RECONNECT_DELAY_S)
                     continue
+                if stop.is_set():
+                    raise ShutdownRequested
                 print("Hub connected.")
             if not calibrated:
                 status.hub = "calibrating"
@@ -186,15 +222,23 @@ async def connect_and_calibrate(hub_stack: AsyncExitStack, buttons: ButtonTarget
                 calibrated = True
             status.hub = "ready"
             while not clock_is_synchronized():
+                if stop.is_set():
+                    raise ShutdownRequested
                 status.clock_synchronized = False
-                await asyncio.sleep(CLOCK_WAIT_POLL_S)
+                await _sleep_or_stop(stop, CLOCK_WAIT_POLL_S)
             status.clock_synchronized = True
             refresh_astronomy_downloads(allow_network=True)
             await asyncio.sleep(0)
             return hub
+    raise ShutdownRequested
 
 
-async def run_selection_loop(hub: MoveHub, buttons: ButtonTargetSource) -> None:
+async def run_selection_loop(
+    hub: MoveHub,
+    buttons: ButtonTargetSource,
+    *,
+    stop: asyncio.Event | None = None,
+) -> None:
     """Point at the selected target, then wait for the next press or a refresh.
 
     Pointing is suspended while the clock is unsynchronized, since every angle is
@@ -204,7 +248,7 @@ async def run_selection_loop(hub: MoveHub, buttons: ButtonTargetSource) -> None:
     sensor = hub.color_distance_sensor(SENSOR_PORT)
     clock_ready = True
     try:
-        while True:
+        while stop is None or not stop.is_set():
             if not clock_is_synchronized():
                 if clock_ready:
                     clock_ready = False
@@ -214,7 +258,7 @@ async def run_selection_loop(hub: MoveHub, buttons: ButtonTargetSource) -> None:
                         "pointing suspended until the time is correct."
                     )
                 buttons.set_inputs_enabled(False)
-                await wait_for_clock_sync_panel(buttons)
+                await wait_for_clock_sync_panel(buttons, stop=stop)
                 continue
             if not clock_ready:
                 clock_ready = True
@@ -236,12 +280,32 @@ def gpio_available() -> bool:
     return sys.platform != "darwin"
 
 
+async def _sleep_or_stop(stop: asyncio.Event, seconds: float) -> None:
+    if stop.is_set():
+        return
+    with suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(stop.wait(), timeout=seconds)
+
+
+def _register_shutdown_signals(stop: asyncio.Event, speed_display: ObserverSpeedDisplay) -> None:
+    loop = asyncio.get_running_loop()
+
+    def request_shutdown() -> None:
+        speed_display.stop_lcd_updates()
+        stop.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with suppress(NotImplementedError, RuntimeError):
+            loop.add_signal_handler(sig, request_shutdown)
+
+
 async def run_navigator_loop(
     buttons: ButtonTargetSource,
     log_buffer: LogBuffer,
     *,
     upload_program: bool,
     speed_display: ObserverSpeedDisplay,
+    stop: asyncio.Event,
 ) -> None:
     refresh_astronomy_downloads(allow_network=False)
     program = "pybricks_hub/thin_ble_hub.py" if upload_program else None
@@ -250,19 +314,26 @@ async def run_navigator_loop(
         await outer_stack.enter_async_context(run_web_ui(buttons, log_buffer))
         refresh_task = asyncio.create_task(run_observer_speed_refresh(speed_display, buttons))
         try:
-            while True:
+            while not stop.is_set():
                 buttons.reset()
                 buttons.set_inputs_enabled(False)
                 try:
                     async with AsyncExitStack() as hub_stack:
-                        hub = await connect_and_calibrate(hub_stack, buttons, program)
+                        hub = await connect_and_calibrate(hub_stack, buttons, program, stop=stop)
+                        if stop.is_set():
+                            break
                         buttons.reset()
                         buttons.set_inputs_enabled(True)
-                        await run_selection_loop(hub, buttons)
+                        await run_selection_loop(hub, buttons, stop=stop)
+                except ShutdownRequested:
+                    break
                 except RECOVERABLE_ERRORS as exc:
+                    if stop.is_set():
+                        break
                     print(f"Hub lost ({format_error(exc)}); searching again...")
-                    await asyncio.sleep(RECONNECT_DELAY_S)
+                    await _sleep_or_stop(stop, RECONNECT_DELAY_S)
         finally:
+            speed_display.stop_lcd_updates()
             refresh_task.cancel()
             with suppress(asyncio.CancelledError):
                 await refresh_task
@@ -291,8 +362,16 @@ async def navigator_main(upload_program: bool = False) -> None:
         menu = ButtonMenu()
         speed_display = ObserverSpeedDisplay()
 
+    stop = asyncio.Event()
     with menu as buttons, speed_display as display, capture_stdout(log_buffer):
-        await run_navigator_loop(buttons, log_buffer, upload_program=upload_program, speed_display=display)
+        _register_shutdown_signals(stop, display)
+        await run_navigator_loop(
+            buttons,
+            log_buffer,
+            upload_program=upload_program,
+            speed_display=display,
+            stop=stop,
+        )
 
 
 if __name__ == "__main__":

@@ -17,6 +17,9 @@ PRINT_OBSERVER_SPEED = False
 class ObserverSpeedDisplay:
     """Observer speed readout; ``ObserverSpeedLcd`` drives the physical LCD on Linux."""
 
+    def __init__(self) -> None:
+        self._updates_enabled = True
+
     def __enter__(self) -> ObserverSpeedDisplay:
         self.show_target(PointingTarget.EARTH_ROTATION, simulation_time())
         return self
@@ -24,7 +27,15 @@ class ObserverSpeedDisplay:
     def __exit__(self, *exc: object) -> None:
         return None
 
+    def stop_lcd_updates(self) -> None:
+        self._updates_enabled = False
+
+    def lcd_updates_enabled(self) -> bool:
+        return self._updates_enabled
+
     def show_target(self, target: PointingTarget, time: Time | None = None) -> None:
+        if not self._updates_enabled:
+            return
         when = simulation_time() if time is None else time
         line1, line2 = observer_speed_display_lines(when, target)
         if PRINT_OBSERVER_SPEED:
@@ -35,6 +46,6 @@ class ObserverSpeedDisplay:
 
 
 async def run_observer_speed_refresh(display: ObserverSpeedDisplay, buttons: ButtonMenu) -> None:
-    while True:
+    while display.lcd_updates_enabled():
         display.show_target(buttons.selected_button["target"])
         await asyncio.sleep(_REFRESH_S)

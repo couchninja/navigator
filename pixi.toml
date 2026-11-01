@@ -25,8 +25,6 @@ hub-upload = "python pybricks_client/ble_control.py download pybricks_hub/thin_b
 test-hub = "python pybricks_client/test_hub.py"
 test = "pytest --disable-socket --allow-unix-socket && pytest --force-enable-socket"
 
-gpio-shutdown = "python -u gpio/gpio_shutdown_main.py"
-
 precommit = "pre-commit run --all-files"
 precommit-install = "pre-commit install"
 # Survives reboot
