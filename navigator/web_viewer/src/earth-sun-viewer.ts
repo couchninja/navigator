@@ -49,7 +49,7 @@ import type {
 const VIEWER_TARGET_FPS = 60;
 const VIEWER_FRAME_MS = 1000 / VIEWER_TARGET_FPS;
 const SIM_MINUTE_MS = 60_000;
-const LABEL_OFFSET_BODY_RADII = 2.5;
+const LABEL_OFFSET_BODY_RADII = 3.25;
 const _labelWorldCenter = new THREE.Vector3();
 const _labelWorldAnchor = new THREE.Vector3();
 const _cameraScreenDown = new THREE.Vector3();
@@ -167,7 +167,9 @@ function createLabel(text: string, color: string): CSS2DObject {
   element.style.textShadow = "0 1px 3px rgba(0,0,0,0.85)";
   element.style.pointerEvents = "none";
   element.style.whiteSpace = "nowrap";
-  return new CSS2DObject(element);
+  const label = new CSS2DObject(element);
+  label.center.set(0.5, 0);
+  return label;
 }
 
 type BodyEntry = {
