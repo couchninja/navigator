@@ -27,6 +27,24 @@ GpiodLineConfig = dict[Iterable[int | str] | int | str, gpiod.LineSettings | Non
 _ALL_LED_PINS = frozenset(button["led_pin"] for button in BUTTONS)
 
 
+def power_off_button_leds(*, chip: str = CHIP) -> None:
+    config: GpiodLineConfig = {
+        pin: gpiod.LineSettings(
+            direction=Direction.OUTPUT,
+            output_value=Value.INACTIVE,
+        )
+        for pin in _ALL_LED_PINS
+    }
+    request = gpiod.request_lines(
+        chip,
+        consumer="navigator-gpio-shutdown",
+        config=config,
+    )
+    for pin in _ALL_LED_PINS:
+        request.set_value(pin, Value.INACTIVE)
+    request.release()
+
+
 class ButtonMenuGpio(ButtonMenu):
     """Single-selection button panel: one LED lit for the selected target."""
 
