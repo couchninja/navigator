@@ -31,6 +31,7 @@ import { createConstellationSky, skyOpacityForCameraDistance } from "./constella
 import { createFlatArrowGroup, disposeFlatArrowGroup, orientFlatArrow } from "./billboard-arrow";
 import { isPointingArrowName, pointingArrowName } from "./pointing-arrow";
 import { createEarthMesh } from "./earth-mesh";
+import { createSunGlowSprite, disposeSunGlowSprite, layoutSunGlow } from "./sun-glow";
 import { sampleKeplerianOrbitPoints, type KeplerianOrbitParams } from "./keplerian-orbit";
 import { heliocentricOriginForParametricOrbit, parametricOrbitSampleCount } from "./orbit-path-samples";
 import { simulationTimeMsFromIso } from "./simulation-time";
@@ -85,13 +86,14 @@ function matrixFromSnapshot(values: number[]): THREE.Matrix4 {
   return matrix;
 }
 
-function createSphereMesh(radius: number, color: Rgb, emissiveIntensity = 0): THREE.Mesh {
+function createSphereMesh(radius: number, color: Rgb, emissiveIntensity = 0, sunGlowDepthBias = false): THREE.Mesh {
   const geometry = new THREE.IcosahedronGeometry(radius, 3);
   const threeColor = rgbToThree(color);
   const material = new THREE.MeshStandardMaterial({
     color: threeColor,
     roughness: 0.75,
     ...(emissiveIntensity > 0 ? { emissive: threeColor.clone(), emissiveIntensity } : {}),
+    ...(sunGlowDepthBias ? { polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 } : {}),
   });
   return new THREE.Mesh(geometry, material);
 }
@@ -301,6 +303,7 @@ export class EarthSunViewer {
       this.clampCameraDistance();
       this.syncClipPlanes();
       this.layoutArrows();
+      this.layoutSunGlow();
       this.updateLabels();
       this.labelRenderer.render(this.scene, this.camera);
     });
@@ -430,6 +433,7 @@ export class EarthSunViewer {
     }
     this.removeArrowsExcept(snapshot.arrows.map((arrow) => arrow.name));
     this.layoutArrows();
+    this.layoutSunGlow();
     this.syncClipPlanes();
     this.updateLabels();
     this.syncOrbitPivot();
@@ -465,15 +469,27 @@ export class EarthSunViewer {
 
     if (Math.abs(entry.radius - body.radius) > entry.radius * 1e-6) {
       entry.root.children
-        .filter((child) => child instanceof THREE.Mesh)
-        .forEach((mesh) => {
-          entry.root.remove(mesh);
-          (mesh as THREE.Mesh).geometry.dispose();
+        .filter(
+          (child) => child instanceof THREE.Mesh || (child instanceof THREE.Sprite && child.userData.sunGlow === true),
+        )
+        .forEach((visual) => {
+          entry.root.remove(visual);
+          if (visual instanceof THREE.Mesh) {
+            visual.geometry.dispose();
+            (visual.material as THREE.Material).dispose();
+          } else if (visual instanceof THREE.Sprite) {
+            disposeSunGlowSprite(visual);
+          }
         });
       const mesh =
         body.name === "earth"
           ? createEarthMesh(body.radius)
-          : createSphereMesh(body.radius, body.color, SELF_LIT_BODY_EMISSIVE_INTENSITY[body.name] ?? 0);
+          : createSphereMesh(
+              body.radius,
+              body.color,
+              SELF_LIT_BODY_EMISSIVE_INTENSITY[body.name] ?? 0,
+              body.name === "sun",
+            );
       entry.root.add(mesh);
       entry.radius = body.radius;
     }
@@ -486,6 +502,12 @@ export class EarthSunViewer {
     }
     if (body.name === "sun") {
       this.sunPointLight.position.setFromMatrixPosition(entry.root.matrix);
+      const hasGlow = entry.root.children.some(
+        (child) => child instanceof THREE.Sprite && child.userData.sunGlow === true,
+      );
+      if (!hasGlow) {
+        entry.root.add(createSunGlowSprite(body.radius));
+      }
     }
   }
 
@@ -718,6 +740,18 @@ export class EarthSunViewer {
     return frame.base.clone();
   }
 
+  private layoutSunGlow(): void {
+    const sun = this.bodies.get("sun");
+    if (!sun) {
+      return;
+    }
+    const glow = sun.root.children.find((child) => child instanceof THREE.Sprite && child.userData.sunGlow === true);
+    if (!(glow instanceof THREE.Sprite)) {
+      return;
+    }
+    layoutSunGlow(glow, sun.root, sun.radius, this.camera);
+  }
+
   private layoutArrows(): void {
     if (this.arrowMeshLengthAu <= 0) {
       return;
@@ -938,6 +972,7 @@ export class EarthSunViewer {
     this.tickSimMinuteCamera();
     this.updateParametricOrbitGeometry(this.currentSimulationTimeMs());
     this.layoutArrows();
+    this.layoutSunGlow();
     this.syncClipPlanes();
     this.outlinePipeline.prepareFrame();
     this.outlinePipeline.renderPipeline.render();
@@ -997,6 +1032,7 @@ export class EarthSunViewer {
       this.clampCameraDistance();
       this.syncClipPlanes();
       this.layoutArrows();
+      this.layoutSunGlow();
     });
   }
 }
