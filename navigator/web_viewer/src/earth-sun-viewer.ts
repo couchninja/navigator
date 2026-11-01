@@ -47,6 +47,7 @@ import type {
 
 const VIEWER_TARGET_FPS = 60;
 const VIEWER_FRAME_MS = 1000 / VIEWER_TARGET_FPS;
+const SIM_MINUTE_MS = 60_000;
 const LABEL_OFFSET_BODY_RADII = 2.5;
 const _labelWorldCenter = new THREE.Vector3();
 const _labelWorldAnchor = new THREE.Vector3();
@@ -236,6 +237,10 @@ export class EarthSunViewer {
   private cameraOrbitTween: CameraOrbitTweenHandle | null = null;
   private cameraOrbitTweenUntil = 0;
   private sceneSnapshot: SceneSnapshot | null = null;
+  private userControlsCamera = false;
+  private nextSimCameraUpdateMs = 0;
+  private pendingSimMinuteCamera = false;
+  private sceneRefreshHook: (() => void) | null = null;
 
   constructor(mount: HTMLElement) {
     this.root = document.createElement("div");
@@ -286,6 +291,11 @@ export class EarthSunViewer {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.target.set(0, 0, 0);
+    this.controls.addEventListener("start", () => {
+      if (!cameraOrbitTweenActive()) {
+        this.userControlsCamera = true;
+      }
+    });
     this.controls.addEventListener("change", () => {
       this.cameraMotionUntil = performance.now() + 250;
       this.clampCameraDistance();
@@ -336,6 +346,15 @@ export class EarthSunViewer {
     this.geometryPollIntervalMs = intervalMs;
   }
 
+  setSceneRefreshHook(hook: () => void): void {
+    this.sceneRefreshHook = hook;
+  }
+
+  releaseUserCameraControl(): void {
+    this.userControlsCamera = false;
+    this.alignNextSimCameraUpdateMs();
+  }
+
   dispose(): void {
     cancelAnimationFrame(this.animationId);
     this.resizeObserver?.disconnect();
@@ -357,6 +376,7 @@ export class EarthSunViewer {
     this.syncArrowVisibility();
     if (targetChanged) {
       this.pendingPointingTargetCamera = true;
+      this.releaseUserCameraControl();
     }
   }
 
@@ -419,6 +439,9 @@ export class EarthSunViewer {
     }
     if (this.pendingPointingTargetCamera && this.pointingTarget !== "") {
       this.pendingPointingTargetCamera = false;
+      this.animateCameraForPointingTarget(snapshot);
+    } else if (this.pendingSimMinuteCamera && !this.userControlsCamera && this.pointingTarget !== "") {
+      this.pendingSimMinuteCamera = false;
       this.animateCameraForPointingTarget(snapshot);
     }
     this.lastRenderTime = 0;
@@ -515,6 +538,28 @@ export class EarthSunViewer {
     this.timeScaling = timeScaling > 0 ? timeScaling : 1;
     this.simTimeAnchorMs = simulationTimeMsFromIso(iso);
     this.wallAnchorMs = performance.now();
+    this.alignNextSimCameraUpdateMs();
+  }
+
+  private alignNextSimCameraUpdateMs(): void {
+    const simMs = this.currentSimulationTimeMs();
+    this.nextSimCameraUpdateMs = Math.floor(simMs / SIM_MINUTE_MS) * SIM_MINUTE_MS + SIM_MINUTE_MS;
+  }
+
+  private tickSimMinuteCamera(): void {
+    if (this.userControlsCamera || this.pointingTarget === "" || this.sceneSnapshot === null) {
+      return;
+    }
+    if (cameraOrbitTweenActive()) {
+      return;
+    }
+    const simMs = this.currentSimulationTimeMs();
+    if (simMs < this.nextSimCameraUpdateMs) {
+      return;
+    }
+    this.nextSimCameraUpdateMs += SIM_MINUTE_MS;
+    this.pendingSimMinuteCamera = true;
+    this.sceneRefreshHook?.();
   }
 
   private currentSimulationTimeMs(): number {
@@ -890,6 +935,7 @@ export class EarthSunViewer {
       return;
     }
     this.syncFloatingOrigin();
+    this.tickSimMinuteCamera();
     this.updateParametricOrbitGeometry(this.currentSimulationTimeMs());
     this.layoutArrows();
     this.syncClipPlanes();

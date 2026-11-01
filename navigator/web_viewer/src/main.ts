@@ -138,6 +138,7 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
   let inFlight = false;
   let scenePollingActive = false;
   let lastPointingTarget: string | null = null;
+  let lastTimeScalePreset: string | null = null;
   const sidebarLegacyOrbits = document.getElementById("legacy-orbit-lines-control");
   let includeEphemerisOrbitPaths =
     sidebarLegacyOrbits instanceof HTMLInputElement ? sidebarLegacyOrbits.checked : false;
@@ -193,6 +194,10 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
     }
   };
 
+  viewer.setSceneRefreshHook(() => {
+    void pollScene();
+  });
+
   const beginScenePolling = (): void => {
     if (scenePollingActive) {
       return;
@@ -208,11 +213,19 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
     if (status === null) {
       return;
     }
-    applyScenePollMs(scenePollIntervalMs(status.time_scale.preset));
+    const preset = status.time_scale.preset;
+    applyScenePollMs(scenePollIntervalMs(preset));
+    const navigatorButtonInput =
+      (lastPointingTarget !== null && lastPointingTarget !== status.target) ||
+      (lastTimeScalePreset !== null && lastTimeScalePreset !== preset);
+    if (navigatorButtonInput) {
+      viewer.releaseUserCameraControl();
+    }
     if (lastPointingTarget !== null && lastPointingTarget !== status.target) {
       void pollScene();
     }
     lastPointingTarget = status.target;
+    lastTimeScalePreset = preset;
     viewer.applyNavigatorStatus({
       target: status.target,
       timeIso: status.time_scale.time_iso ?? null,
