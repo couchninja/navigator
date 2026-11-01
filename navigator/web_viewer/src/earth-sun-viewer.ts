@@ -943,6 +943,7 @@ export class EarthSunViewer {
       this.camera.position.set(0, 0, this.defaultCameraDistance || 1);
       this.controls.update();
     }
+    this.lastRenderTime = 0;
   };
 
   private renderIntervalMs(now: number): number {
