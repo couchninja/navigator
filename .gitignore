@@ -10,3 +10,4 @@ logs/*.log
 navigator/web_viewer/node_modules/
 navigator/web_viewer/.tsbuildinfo
 navigator/web_viewer/dist/viewer.js
+todo.md
