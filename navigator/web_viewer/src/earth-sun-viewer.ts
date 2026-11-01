@@ -55,7 +55,7 @@ const _galacticCenterWorld = new THREE.Vector3();
 const _orbitPivot = new THREE.Vector3();
 const SELF_LIT_BODY_EMISSIVE_INTENSITY: Partial<Record<string, number>> = {
   sun: 0.65,
-  observer: 0.45,
+  observer: 0.1,
   iss: 0.45,
 };
 const BODY_LABEL_COLORS: Record<string, string> = {
@@ -63,7 +63,7 @@ const BODY_LABEL_COLORS: Record<string, string> = {
   earth: "rgb(255, 255, 255)",
   moon: "rgb(210, 210, 205)",
   iss: "rgb(70, 130, 255)",
-  observer: "rgb(255, 80, 40)",
+  observer: "rgb(255, 0, 0)",
   galactic_center: "rgb(240, 200, 255)",
 };
 const BODY_LABELS: Record<string, string> = {
@@ -351,11 +351,7 @@ export class EarthSunViewer {
       this.captionEl.textContent = `Earth-sun (${status.timeIso})`;
       this.setSimulationClock(status.timeIso, status.timeScaling);
     }
-    const targetChanged =
-      this.hasInitialCamera &&
-      this.lastPointingTarget !== null &&
-      status.target !== "" &&
-      status.target !== this.lastPointingTarget;
+    const targetChanged = status.target !== "" && status.target !== this.lastPointingTarget;
     this.pointingTarget = status.target;
     this.lastPointingTarget = status.target;
     this.syncArrowVisibility();

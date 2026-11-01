@@ -65,6 +65,21 @@ const BODY_FOR_TARGET: Partial<Record<string, string>> = {
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const EARTH_VIEWPORT_FILL = 0.9;
 const ORBIT_VIEWPORT_FILL = 0.9;
+/** Earth sphere radius as a fraction of full viewport height for direct body targets. */
+const BODY_TARGET_EARTH_RADIUS_VIEWPORT_FRACTION = 0.2;
+/** Target body center height from the top of the viewport (direct body targets). */
+const BODY_TARGET_VIEWPORT_TOP_FRACTION = 0.2;
+
+const _bodyFramingCameraScratch = new THREE.PerspectiveCamera();
+const _bodyFramingProject = new THREE.Vector3();
+const _bodyFramingOffset = new THREE.Vector3();
+const _bodySightCross = new THREE.Vector3();
+
+type BodyTargetSightFrame = {
+  towardTarget: THREE.Vector3;
+  downToEarth: THREE.Vector3;
+  normal: THREE.Vector3;
+};
 
 export type OrbitCameraPose = {
   offset: THREE.Vector3;
@@ -281,6 +296,277 @@ function halfViewportFovRad(camera: THREE.PerspectiveCamera, fill: number): numb
   return Math.min(halfFovX, halfFovY);
 }
 
+function isDirectBodyPointingTarget(pointingTarget: string): boolean {
+  return pointingTarget in BODY_FOR_TARGET && pointingTarget !== "iss";
+}
+
+function bodyTargetNdcYFromTop(): number {
+  return 1 - 2 * BODY_TARGET_VIEWPORT_TOP_FRACTION;
+}
+
+function applyOrbitCameraPose(
+  camera: THREE.PerspectiveCamera,
+  pivot: THREE.Vector3,
+  offset: THREE.Vector3,
+  up: THREE.Vector3,
+): void {
+  camera.position.copy(pivot).add(offset);
+  camera.up.copy(up).normalize();
+  camera.lookAt(pivot);
+  camera.updateMatrixWorld(true);
+}
+
+function projectedSphereNdcRadius(camera: THREE.PerspectiveCamera, center: THREE.Vector3, radius: number): number {
+  const centerDistance = camera.position.distanceTo(center);
+  if (centerDistance <= radius) {
+    return 1;
+  }
+  const angularRadius = Math.asin(Math.min(1, radius / centerDistance));
+  const halfFovY = THREE.MathUtils.degToRad(camera.fov / 2);
+  return angularRadius / halfFovY;
+}
+
+function earthProjectedRadiusAtDistance(
+  camera: THREE.PerspectiveCamera,
+  observer: THREE.Vector3,
+  offsetDirection: THREE.Vector3,
+  up: THREE.Vector3,
+  earthCenter: THREE.Vector3,
+  earthRadius: number,
+  distance: number,
+): number {
+  _bodyFramingOffset.copy(offsetDirection).multiplyScalar(distance);
+  applyOrbitCameraPose(camera, observer, _bodyFramingOffset, up);
+  return projectedSphereNdcRadius(camera, earthCenter, earthRadius);
+}
+
+/** Plane through earth center, observer, and target; camera stays in-plane so all three share one vertical screen line. */
+function bodyTargetSightFrame(
+  observer: THREE.Vector3,
+  earthCenter: THREE.Vector3,
+  targetPosition: THREE.Vector3,
+  fallbackNormal: THREE.Vector3,
+): BodyTargetSightFrame | null {
+  _bodyFramingProject.copy(targetPosition).sub(observer);
+  if (_bodyFramingProject.lengthSq() < 1e-20) {
+    return null;
+  }
+  const towardTarget = _bodyFramingProject.clone().normalize();
+
+  _bodyFramingOffset.copy(earthCenter).sub(observer);
+  if (_bodyFramingOffset.lengthSq() < 1e-20) {
+    return null;
+  }
+  const downToEarth = _bodyFramingOffset.clone().normalize();
+
+  _bodySightCross.crossVectors(towardTarget, downToEarth);
+  let normal: THREE.Vector3;
+  if (_bodySightCross.lengthSq() < 1e-16) {
+    normal = fallbackNormal.clone().normalize();
+  } else {
+    normal = _bodySightCross.normalize();
+    if (normal.dot(WORLD_UP) < 0) {
+      normal.negate();
+    }
+  }
+
+  return { towardTarget, downToEarth, normal };
+}
+
+function offsetDirectionInSightPlane(
+  towardTarget: THREE.Vector3,
+  downToEarth: THREE.Vector3,
+  elevation: number,
+  target: THREE.Vector3,
+): void {
+  target
+    .copy(towardTarget)
+    .multiplyScalar(-Math.cos(elevation))
+    .addScaledVector(downToEarth, Math.sin(elevation))
+    .normalize();
+}
+
+function distanceForEarthViewportRadius(
+  camera: THREE.PerspectiveCamera,
+  observer: THREE.Vector3,
+  offsetDirection: THREE.Vector3,
+  up: THREE.Vector3,
+  earthCenter: THREE.Vector3,
+  earthRadius: number,
+  minDistance: number,
+  maxDistance: number,
+): number {
+  const targetRadius = BODY_TARGET_EARTH_RADIUS_VIEWPORT_FRACTION;
+  const radiusAt = (distance: number): number =>
+    earthProjectedRadiusAtDistance(camera, observer, offsetDirection, up, earthCenter, earthRadius, distance);
+
+  if (radiusAt(minDistance) <= targetRadius) {
+    return minDistance;
+  }
+  if (radiusAt(maxDistance) >= targetRadius) {
+    return maxDistance;
+  }
+
+  let lo = minDistance;
+  let hi = maxDistance;
+  for (let step = 0; step < 48; step += 1) {
+    const mid = (lo + hi) / 2;
+    if (radiusAt(mid) > targetRadius) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return hi;
+}
+
+function desiredBodyTargetCameraPose(
+  camera: THREE.PerspectiveCamera,
+  snapshot: SceneSnapshot,
+  pointingTarget: string,
+  observer: THREE.Vector3,
+  bodyWorldPosition: (name: string) => THREE.Vector3 | null,
+  currentOffsetDirection: THREE.Vector3,
+  maxDistance: number,
+): OrbitCameraPose | null {
+  const bodyName = BODY_FOR_TARGET[pointingTarget];
+  if (!bodyName) {
+    return null;
+  }
+  const targetPosition = bodyWorldPosition(bodyName);
+  const earthCenter = bodyWorldPosition("earth");
+  if (!targetPosition || !earthCenter) {
+    return null;
+  }
+  const earthBody = snapshot.bodies.find((body) => body.name === "earth");
+  const earthRadius = earthBody?.radius ?? EARTH_RADIUS_AU;
+
+  const orbitNormal = orbitPlaneNormal(snapshot, pointingTarget, currentOffsetDirection);
+  const sightFrame = bodyTargetSightFrame(observer, earthCenter, targetPosition, orbitNormal);
+  if (!sightFrame) {
+    return null;
+  }
+  const { towardTarget, downToEarth, normal: sightNormal } = sightFrame;
+  const cameraUp = _bodySightCross.copy(downToEarth).negate();
+
+  const minDistance = Math.max(DEFAULT_CAMERA_DISTANCE_AU * 0.01, earthRadius * 2, 1e-14);
+  const upperDistance =
+    Number.isFinite(maxDistance) && maxDistance > 0
+      ? maxDistance
+      : Math.max(minDistance * 64, DEFAULT_CAMERA_DISTANCE_AU);
+
+  const scratchCamera = _bodyFramingCameraScratch;
+  scratchCamera.fov = camera.fov;
+  scratchCamera.aspect = camera.aspect;
+  scratchCamera.near = camera.near;
+  scratchCamera.far = camera.far;
+  scratchCamera.updateProjectionMatrix();
+
+  const elevationLimit = Math.PI / 2 - 0.02;
+  const targetNdcY = bodyTargetNdcYFromTop();
+
+  const poseAtElevation = (
+    elevation: number,
+  ): {
+    offsetDirection: THREE.Vector3;
+    distance: number;
+    targetNdcY: number;
+    earthNdcY: number;
+    targetNdcX: number;
+    earthNdcX: number;
+  } => {
+    const offsetDirection = new THREE.Vector3();
+    offsetDirectionInSightPlane(towardTarget, sightNormal, elevation, offsetDirection);
+    const distance = distanceForEarthViewportRadius(
+      scratchCamera,
+      observer,
+      offsetDirection,
+      cameraUp,
+      earthCenter,
+      earthRadius,
+      minDistance,
+      upperDistance,
+    );
+    _bodyFramingOffset.copy(offsetDirection).multiplyScalar(distance);
+    applyOrbitCameraPose(scratchCamera, observer, _bodyFramingOffset, cameraUp);
+    const targetNdc = targetPosition.clone().project(scratchCamera);
+    const earthNdc = earthCenter.clone().project(scratchCamera);
+    return {
+      offsetDirection,
+      distance,
+      targetNdcY: targetNdc.y,
+      earthNdcY: earthNdc.y,
+      targetNdcX: targetNdc.x,
+      earthNdcX: earthNdc.x,
+    };
+  };
+
+  const framingError = (pose: {
+    targetNdcY: number;
+    earthNdcY: number;
+    targetNdcX: number;
+    earthNdcX: number;
+  }): number => {
+    const targetYError = pose.targetNdcY - targetNdcY;
+    let error = targetYError * targetYError + pose.targetNdcX * pose.targetNdcX + pose.earthNdcX * pose.earthNdcX;
+    if (pose.earthNdcY >= 0) {
+      error += (pose.earthNdcY + 0.05) * (pose.earthNdcY + 0.05);
+    }
+    if (pose.targetNdcY <= 0) {
+      error += (0.05 - pose.targetNdcY) * (0.05 - pose.targetNdcY);
+    }
+    return error;
+  };
+
+  let bestElevation = ORBIT_PLANE_ELEVATION_RAD;
+  let bestDistance = minDistance;
+  let bestError = Number.POSITIVE_INFINITY;
+
+  for (let sample = 0; sample <= 256; sample += 1) {
+    const elevation = (sample / 256) * elevationLimit;
+    const pose = poseAtElevation(elevation);
+    const error = framingError(pose);
+    if (error < bestError) {
+      bestError = error;
+      bestElevation = elevation;
+      bestDistance = pose.distance;
+    }
+  }
+
+  let refineLo = Math.max(0, bestElevation - elevationLimit / 256);
+  let refineHi = Math.min(elevationLimit, bestElevation + elevationLimit / 256);
+  for (let step = 0; step < 32; step += 1) {
+    const third = (refineHi - refineLo) / 3;
+    const leftElevation = refineLo + third;
+    const rightElevation = refineHi - third;
+    const left = poseAtElevation(leftElevation);
+    const right = poseAtElevation(rightElevation);
+    if (framingError(left) <= framingError(right)) {
+      refineHi = rightElevation;
+      if (framingError(left) < bestError) {
+        bestError = framingError(left);
+        bestElevation = leftElevation;
+        bestDistance = left.distance;
+      }
+    } else {
+      refineLo = leftElevation;
+      if (framingError(right) < bestError) {
+        bestError = framingError(right);
+        bestElevation = rightElevation;
+        bestDistance = right.distance;
+      }
+    }
+  }
+
+  const offsetDirection = new THREE.Vector3();
+  offsetDirectionInSightPlane(towardTarget, sightNormal, bestElevation, offsetDirection);
+
+  return {
+    offset: offsetDirection.multiplyScalar(bestDistance),
+    up: cameraUp.clone(),
+  };
+}
+
 function issOrbitPlaneNormalTowardObserver(
   snapshot: SceneSnapshot,
   earthCenter: THREE.Vector3,
@@ -476,6 +762,21 @@ export function desiredOrbitTargetCameraPose(
   currentOffsetDirection: THREE.Vector3,
   maxDistance: number,
 ): OrbitCameraPose {
+  if (isDirectBodyPointingTarget(pointingTarget)) {
+    const bodyPose = desiredBodyTargetCameraPose(
+      camera,
+      snapshot,
+      pointingTarget,
+      observer,
+      bodyWorldPosition,
+      currentOffsetDirection,
+      maxDistance,
+    );
+    if (bodyPose) {
+      return bodyPose;
+    }
+  }
+
   if (framingPointingTarget(pointingTarget) === "iss") {
     const issPose = desiredIssOrbitCameraPose(
       camera,

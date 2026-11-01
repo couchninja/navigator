@@ -21,6 +21,100 @@ function baseSnapshot(overrides: Partial<SceneSnapshot> = {}): SceneSnapshot {
   };
 }
 
+function applyPose(
+  camera: THREE.PerspectiveCamera,
+  observer: THREE.Vector3,
+  pose: { offset: THREE.Vector3; up: THREE.Vector3 },
+): void {
+  camera.position.copy(observer).add(pose.offset);
+  camera.up.copy(pose.up).normalize();
+  camera.lookAt(observer);
+  camera.updateMatrixWorld(true);
+}
+
+function projectedEarthNdcRadius(
+  camera: THREE.PerspectiveCamera,
+  earthCenter: THREE.Vector3,
+  earthRadius: number,
+): number {
+  const centerDistance = camera.position.distanceTo(earthCenter);
+  const angularRadius = Math.asin(Math.min(1, earthRadius / centerDistance));
+  const halfFovY = THREE.MathUtils.degToRad(camera.fov / 2);
+  return angularRadius / halfFovY;
+}
+
+describe("desiredOrbitTargetCameraPose for direct body targets", () => {
+  it("frames Earth at 20% viewport height and the Sun 20% from the top", () => {
+    const earthRadius = 0.001;
+    const earthCenter = new THREE.Vector3(0, 0, 0);
+    const observer = new THREE.Vector3(0, 0, earthRadius);
+    const sunPosition = new THREE.Vector3(1, 0, earthRadius);
+
+    const snapshot = baseSnapshot({
+      bodies: [
+        {
+          name: "earth",
+          radius: earthRadius,
+          color: [0, 0, 1],
+          matrix: translationMatrix(earthCenter),
+        },
+        {
+          name: "sun",
+          radius: 0.01,
+          color: [1, 1, 0],
+          matrix: translationMatrix(sunPosition),
+        },
+      ],
+      paths: [
+        {
+          name: "earth_orbit",
+          color: [1, 1, 1],
+          matrix: translationMatrix(new THREE.Vector3()),
+          segments: [
+            [
+              [0, 0, 0],
+              [1, 0, 0],
+              [0, 0, 0],
+            ],
+          ],
+        },
+      ],
+    });
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 100);
+    const pose = desiredOrbitTargetCameraPose(
+      camera,
+      snapshot,
+      "sun",
+      observer,
+      (name) => {
+        if (name === "earth") {
+          return earthCenter.clone();
+        }
+        if (name === "sun") {
+          return sunPosition.clone();
+        }
+        return null;
+      },
+      new THREE.Vector3(0, 0, 1),
+      100,
+    );
+
+    applyPose(camera, observer, pose);
+    expect(projectedEarthNdcRadius(camera, earthCenter, earthRadius)).toBeCloseTo(0.2, 2);
+    const observerNdc = observer.clone().project(camera);
+    const earthNdc = earthCenter.clone().project(camera);
+    const sunNdc = sunPosition.clone().project(camera);
+    expect(observerNdc.x).toBeCloseTo(0, 4);
+    expect(observerNdc.y).toBeCloseTo(0, 4);
+    expect(earthNdc.x).toBeCloseTo(0, 2);
+    expect(sunNdc.x).toBeCloseTo(0, 2);
+    expect(earthNdc.y).toBeLessThan(0);
+    expect(sunNdc.y).toBeGreaterThan(0);
+    expect(sunNdc.y).toBeCloseTo(0.6, 2);
+  });
+});
+
 describe("desiredOrbitTargetCameraPose for ISS", () => {
   it("places the camera on the observer side, perpendicular to the orbit plane", () => {
     const orbitRadius = 0.01;
@@ -61,22 +155,20 @@ describe("desiredOrbitTargetCameraPose for ISS", () => {
     });
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.0001, 100);
-    const bodyWorldPosition = (name: string) => {
-      if (name === "earth") {
-        return earthCenter.clone();
-      }
-      if (name === "iss") {
-        return issPosition.clone();
-      }
-      return null;
-    };
-
     const pose = desiredOrbitTargetCameraPose(
       camera,
       snapshot,
       "iss",
       observer,
-      bodyWorldPosition,
+      (name) => {
+        if (name === "earth") {
+          return earthCenter.clone();
+        }
+        if (name === "iss") {
+          return issPosition.clone();
+        }
+        return null;
+      },
       new THREE.Vector3(0, 0, 1),
       100,
     );
@@ -85,6 +177,7 @@ describe("desiredOrbitTargetCameraPose for ISS", () => {
     expect(Math.abs(offsetDirection.z)).toBeGreaterThan(0.99);
     expect(offsetDirection.z).toBeGreaterThan(0);
 
+    applyPose(camera, observer, pose);
     const cameraPosition = observer.clone().add(pose.offset);
     const toPivot = observer.clone().sub(cameraPosition).normalize();
     for (const [x, y, z] of snapshot.paths[0].segments[0]) {

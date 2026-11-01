@@ -32,7 +32,7 @@ const BODY_OUTLINE_EDGE_THICKNESS = 0.4;
 export const BODY_OUTLINE_NAMES = ["earth", "moon", "sun", "galactic_center"] as const;
 
 /** Bodies outlined with arrows (same OutlineNode + coverage mask as flat arrows). */
-export const ARROW_OUTLINE_BODY_NAMES = ["iss"] as const;
+export const ARROW_OUTLINE_BODY_NAMES = ["iss", "observer"] as const;
 
 export type ViewerOutlinePipeline = {
   renderPipeline: RenderPipeline;
