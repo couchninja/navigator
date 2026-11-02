@@ -266,8 +266,10 @@ export class EarthSunViewer {
   private arrowEarthRadiusAu = 0;
   private arrowLengthCameraFraction = 0.05;
   private readonly canvasHost: HTMLDivElement;
+  private readonly overlayLayer: HTMLDivElement;
   private readonly captionEl: HTMLDivElement;
   private readonly fpsEl: HTMLDivElement;
+  private readonly speedEl: HTMLDivElement;
   private resizeObserver: ResizeObserver | null = null;
   private defaultCameraDistance = 1;
   private earthRadiusAu = 1;
@@ -315,11 +317,12 @@ export class EarthSunViewer {
 
     this.captionEl = document.createElement("div");
     this.captionEl.className = "earth-sun-viewer-caption";
-    this.canvasHost.appendChild(this.captionEl);
 
     this.fpsEl = document.createElement("div");
     this.fpsEl.className = "earth-sun-viewer-fps";
-    this.canvasHost.appendChild(this.fpsEl);
+
+    this.speedEl = document.createElement("div");
+    this.speedEl.className = "earth-sun-viewer-speed";
 
     this.scene = new THREE.Scene();
     this.contentRoot = new THREE.Group();
@@ -347,6 +350,11 @@ export class EarthSunViewer {
     this.labelRenderer.domElement.style.inset = "0";
     this.labelRenderer.domElement.style.pointerEvents = "none";
     this.canvasHost.appendChild(this.labelRenderer.domElement);
+
+    this.overlayLayer = document.createElement("div");
+    this.overlayLayer.className = "earth-sun-viewer-overlay";
+    this.overlayLayer.append(this.captionEl, this.fpsEl, this.speedEl);
+    this.canvasHost.appendChild(this.overlayLayer);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enablePan = false;
@@ -403,7 +411,26 @@ export class EarthSunViewer {
     }
     parent.removeChild(canvas);
     parent.insertBefore(canvas, this.labelRenderer.domElement);
+    this.ensureOverlayOnTop();
     this.onResize();
+  }
+
+  private ensureOverlayOnTop(): void {
+    if (this.overlayLayer.parentElement === this.canvasHost) {
+      this.canvasHost.appendChild(this.overlayLayer);
+    }
+  }
+
+  setFullscreenUiMode(active: boolean): void {
+    this.root.classList.toggle("viewer-fullscreen-ui", active);
+  }
+
+  updateSpeedOverlay(speedKmH: number | null): void {
+    if (speedKmH != null) {
+      this.speedEl.textContent = `${speedKmH.toFixed(2)} km/h`;
+    } else {
+      this.speedEl.textContent = "";
+    }
   }
 
   setGeometryPollIntervalMs(intervalMs: number): void {
@@ -444,11 +471,17 @@ export class EarthSunViewer {
     this.root.remove();
   }
 
-  applyNavigatorStatus(status: { target: string; timeIso: string | null; timeScaling: number }): void {
+  applyNavigatorStatus(status: {
+    target: string;
+    timeIso: string | null;
+    timeScaling: number;
+    speedKmH: number | null;
+  }): void {
     if (status.timeIso) {
       this.captionEl.textContent = `Earth-sun (${status.timeIso})`;
       this.setSimulationClock(status.timeIso, status.timeScaling);
     }
+    this.updateSpeedOverlay(status.speedKmH);
     const targetChanged = status.target !== "" && status.target !== this.lastPointingTarget;
     this.pointingTarget = status.target;
     this.lastPointingTarget = status.target;

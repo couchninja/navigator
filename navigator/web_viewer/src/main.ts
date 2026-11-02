@@ -29,6 +29,7 @@ type TimeScaleStatus = {
 type NavigatorWebStatus = {
   target: string;
   time_scale: TimeScaleStatus;
+  speed_km_h: number | null;
 };
 
 function scenePollIntervalMs(preset: string | null): number {
@@ -59,6 +60,12 @@ function mountStyles(): void {
       width: 100% !important;
       height: 100% !important;
     }
+    .earth-sun-viewer-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 20;
+    }
     .earth-sun-viewer-caption {
       position: absolute;
       top: 8px;
@@ -69,8 +76,6 @@ function mountStyles(): void {
       background: rgba(15, 20, 25, 0.72);
       color: #e8eef4;
       font: 600 13px system-ui, sans-serif;
-      pointer-events: none;
-      z-index: 2;
     }
     .earth-sun-viewer-fps {
       position: absolute;
@@ -78,8 +83,25 @@ function mountStyles(): void {
       left: 8px;
       color: rgba(255, 255, 255, 0.78);
       font: 600 13px system-ui, sans-serif;
-      pointer-events: none;
-      z-index: 2;
+    }
+    .earth-sun-viewer-speed {
+      display: none;
+      position: absolute;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      border-radius: 8px;
+      background: rgba(15, 20, 25, 0.72);
+      color: #e8eef4;
+      font: 400 22px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .earth-sun-viewer.viewer-fullscreen-ui .earth-sun-viewer-fps,
+    .earth-sun-viewer.viewer-fullscreen-ui .earth-sun-viewer-caption {
+      display: none;
+    }
+    .earth-sun-viewer.viewer-fullscreen-ui .earth-sun-viewer-speed {
+      display: block;
     }
   `;
   document.head.appendChild(style);
@@ -124,13 +146,42 @@ function navigatorStatusFromDetail(detail: unknown): NavigatorWebStatus | null {
   if (timeScaling !== undefined && typeof timeScaling !== "number") {
     return null;
   }
-  return { target, time_scale: { preset, time_iso: timeIso, time_scaling: timeScaling } };
+  const speedRaw = record.speed_km_h;
+  if (speedRaw !== undefined && speedRaw !== null && typeof speedRaw !== "number") {
+    return null;
+  }
+  const speed_km_h = speedRaw === undefined ? null : speedRaw;
+  return { target, time_scale: { preset, time_iso: timeIso, time_scaling: timeScaling }, speed_km_h };
+}
+
+function viewerFullscreenUiActive(): boolean {
+  return document.querySelector(".app-shell")?.classList.contains("viewer-fullscreen") ?? false;
+}
+
+function speedKmHFromDetail(detail: unknown): number | null {
+  if (detail === null || typeof detail !== "object") {
+    return null;
+  }
+  const speedRaw = (detail as Record<string, unknown>).speed_km_h;
+  if (speedRaw === undefined || speedRaw === null) {
+    return null;
+  }
+  if (typeof speedRaw !== "number") {
+    return null;
+  }
+  return speedRaw;
 }
 
 export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
   mountStyles();
   const viewer = new EarthSunViewer(mount);
+  viewer.setFullscreenUiMode(viewerFullscreenUiActive());
   viewer.setGeometryPollIntervalMs(SCENE_POLL_REALTIME_MS);
+
+  window.addEventListener("navigator-viewer-fullscreen", (event) => {
+    const active = (event as CustomEvent<{ active?: boolean }>).detail?.active === true;
+    viewer.setFullscreenUiMode(active);
+  });
 
   let scenePollMs = SCENE_POLL_REALTIME_MS;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -209,6 +260,7 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
   };
 
   const applyNavigatorStatus = (detail: unknown): void => {
+    viewer.updateSpeedOverlay(speedKmHFromDetail(detail));
     const status = navigatorStatusFromDetail(detail);
     if (status === null) {
       return;
@@ -230,6 +282,7 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
       target: status.target,
       timeIso: status.time_scale.time_iso ?? null,
       timeScaling: status.time_scale.time_scaling ?? 1,
+      speedKmH: status.speed_km_h,
     });
     beginScenePolling();
   };

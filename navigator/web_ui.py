@@ -459,6 +459,9 @@ __TARGET_BUTTONS__
         viewerFullscreenToggle.textContent = "Fullscreen";
         viewerFullscreenToggle.setAttribute("aria-label", "Hide controls and expand viewer");
       }
+      window.dispatchEvent(
+        new CustomEvent("navigator-viewer-fullscreen", { detail: { active: on } }),
+      );
     }
 
     viewerFullscreenToggle.addEventListener("click", () => {
