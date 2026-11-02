@@ -33,7 +33,7 @@ function applyPose(
 }
 
 describe("desiredOrbitTargetCameraPose for direct body targets", () => {
-  it("frames Earth at 20% viewport height and the Sun 20% from the top", () => {
+  it("frames Earth at 70% viewport height and the Sun 20% from the top", () => {
     const earthRadius = 0.001;
     const earthCenter = new THREE.Vector3(0, 0, 0);
     const observer = new THREE.Vector3(0, 0, earthRadius);
@@ -90,7 +90,7 @@ describe("desiredOrbitTargetCameraPose for direct body targets", () => {
     );
 
     applyPose(camera, observer, pose);
-    expect(projectedSphereNdcRadius(camera, earthCenter, earthRadius)).toBeCloseTo(0.2, 2);
+    expect(projectedSphereNdcRadius(camera, earthCenter, earthRadius)).toBeCloseTo(0.7, 2);
     const observerNdc = observer.clone().project(camera);
     const earthNdc = earthCenter.clone().project(camera);
     const sunNdc = sunPosition.clone().project(camera);

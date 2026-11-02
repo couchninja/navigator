@@ -66,7 +66,7 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const EARTH_VIEWPORT_FILL = 0.9;
 const ORBIT_VIEWPORT_FILL = 0.9;
 /** Earth sphere radius as a fraction of full viewport height for direct body targets. */
-const BODY_TARGET_EARTH_RADIUS_VIEWPORT_FRACTION = 0.2;
+const BODY_TARGET_EARTH_RADIUS_VIEWPORT_FRACTION = 0.7;
 /** Target body center height from the top of the viewport (direct body targets). */
 const BODY_TARGET_VIEWPORT_TOP_FRACTION = 0.2;
 
