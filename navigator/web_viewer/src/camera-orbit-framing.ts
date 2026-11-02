@@ -316,7 +316,11 @@ function applyOrbitCameraPose(
   camera.updateMatrixWorld(true);
 }
 
-function projectedSphereNdcRadius(camera: THREE.PerspectiveCamera, center: THREE.Vector3, radius: number): number {
+export function projectedSphereNdcRadius(
+  camera: THREE.PerspectiveCamera,
+  center: THREE.Vector3,
+  radius: number,
+): number {
   const centerDistance = camera.position.distanceTo(center);
   if (centerDistance <= radius) {
     return 1;

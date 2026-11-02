@@ -142,23 +142,30 @@ function smoothstep01(t: number): number {
   return x * x * (3 - 2 * x);
 }
 
+/** Opacity 1 at or below `fadeStart`, 0 at or above `fadeStart + fadeSpan`, smoothstep between. */
+export function opacityFadeOutAboveThreshold(value: number, fadeStart: number, fadeSpan: number): number {
+  if (value <= fadeStart) {
+    return 1;
+  }
+  const fadeEnd = fadeStart + fadeSpan;
+  if (value >= fadeEnd || fadeSpan <= 0) {
+    return 0;
+  }
+  const linear = (value - fadeStart) / fadeSpan;
+  return 1 - smoothstep01(linear);
+}
+
 export function skyOpacityForCameraDistance(
   cameraDistanceAu: number,
   earthOrbitRadiusAu: number,
   fadeStartOrbitMultiple: number,
   fadeSpanOrbitMultiple: number,
 ): number {
-  const fadeStart = fadeStartOrbitMultiple * earthOrbitRadiusAu;
-  if (cameraDistanceAu <= fadeStart) {
-    return 1;
-  }
-  const fadeSpan = fadeSpanOrbitMultiple * earthOrbitRadiusAu;
-  const fadeEnd = fadeStart + fadeSpan;
-  if (cameraDistanceAu >= fadeEnd || fadeSpan <= 0) {
-    return 0;
-  }
-  const linear = (cameraDistanceAu - fadeStart) / fadeSpan;
-  return 1 - smoothstep01(linear);
+  return opacityFadeOutAboveThreshold(
+    cameraDistanceAu,
+    fadeStartOrbitMultiple * earthOrbitRadiusAu,
+    fadeSpanOrbitMultiple * earthOrbitRadiusAu,
+  );
 }
 
 const ORIENTATION_MATRIX = new THREE.Matrix4();

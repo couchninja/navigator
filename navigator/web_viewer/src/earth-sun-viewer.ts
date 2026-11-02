@@ -10,6 +10,7 @@ import {
   desiredOrbitTargetCameraPose,
   heavenlyBodyOrbitRadiusAu,
   milkyWayDiameterAuFromSnapshot,
+  projectedSphereNdcRadius,
   sceneScaleAuFromSnapshot,
 } from "./camera-orbit-framing";
 import {
@@ -35,7 +36,7 @@ import {
   updateCameraTargetTweens,
   type CameraOrbitTweenHandle,
 } from "./camera-target-orbit";
-import { createConstellationSky, skyOpacityForCameraDistance } from "./constellation-sky";
+import { createConstellationSky, opacityFadeOutAboveThreshold, skyOpacityForCameraDistance } from "./constellation-sky";
 import { createFlatArrowGroup, disposeFlatArrowGroup, orientFlatArrow } from "./billboard-arrow";
 import { isPointingArrowName, pointingArrowName } from "./pointing-arrow";
 import { createEarthMesh } from "./earth-mesh";
@@ -58,6 +59,10 @@ const VIEWER_TARGET_FPS = 60;
 const VIEWER_FRAME_MS = 1000 / VIEWER_TARGET_FPS;
 const SIM_MINUTE_MS = 60_000;
 const LABEL_OFFSET_BODY_RADII = 3.25;
+/** Earth label full opacity while projected diameter is at or below this viewport height fraction. */
+const EARTH_LABEL_MAX_DIAMETER_VIEWPORT_FRACTION = 0.1;
+/** Fade Earth label out above that diameter over this additional viewport height fraction. */
+const EARTH_LABEL_FADE_SPAN_VIEWPORT_FRACTION = 0.3;
 const _labelWorldCenter = new THREE.Vector3();
 const _labelWorldAnchor = new THREE.Vector3();
 const _cameraScreenDown = new THREE.Vector3();
@@ -1028,7 +1033,14 @@ export class EarthSunViewer {
       entry.root.getWorldPosition(_labelWorldCenter);
       let labelOpacity = 1;
       const bodyName = entry.root.name;
-      if (bodyName !== "earth" && this.sceneSnapshot) {
+      if (bodyName === "earth") {
+        const diameterViewportFraction = 2 * projectedSphereNdcRadius(this.camera, _labelWorldCenter, entry.radius);
+        labelOpacity = opacityFadeOutAboveThreshold(
+          diameterViewportFraction,
+          EARTH_LABEL_MAX_DIAMETER_VIEWPORT_FRACTION,
+          EARTH_LABEL_FADE_SPAN_VIEWPORT_FRACTION,
+        );
+      } else if (this.sceneSnapshot) {
         const orbitRadius = heavenlyBodyOrbitRadiusAu(bodyName, this.sceneSnapshot, bodyWorldPosition);
         if (orbitRadius !== null && orbitRadius > 0) {
           const cameraDistance = this.camera.position.distanceTo(_labelWorldCenter);

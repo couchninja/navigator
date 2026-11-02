@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 
-import { desiredOrbitTargetCameraPose } from "./camera-orbit-framing";
+import { desiredOrbitTargetCameraPose, projectedSphereNdcRadius } from "./camera-orbit-framing";
 import { EARTH_ORBIT_RADIUS_AU } from "./scene-viewer-constants";
 import type { SceneSnapshot } from "./scene-types";
 
@@ -30,17 +30,6 @@ function applyPose(
   camera.up.copy(pose.up).normalize();
   camera.lookAt(observer);
   camera.updateMatrixWorld(true);
-}
-
-function projectedEarthNdcRadius(
-  camera: THREE.PerspectiveCamera,
-  earthCenter: THREE.Vector3,
-  earthRadius: number,
-): number {
-  const centerDistance = camera.position.distanceTo(earthCenter);
-  const angularRadius = Math.asin(Math.min(1, earthRadius / centerDistance));
-  const halfFovY = THREE.MathUtils.degToRad(camera.fov / 2);
-  return angularRadius / halfFovY;
 }
 
 describe("desiredOrbitTargetCameraPose for direct body targets", () => {
@@ -101,7 +90,7 @@ describe("desiredOrbitTargetCameraPose for direct body targets", () => {
     );
 
     applyPose(camera, observer, pose);
-    expect(projectedEarthNdcRadius(camera, earthCenter, earthRadius)).toBeCloseTo(0.2, 2);
+    expect(projectedSphereNdcRadius(camera, earthCenter, earthRadius)).toBeCloseTo(0.2, 2);
     const observerNdc = observer.clone().project(camera);
     const earthNdc = earthCenter.clone().project(camera);
     const sunNdc = sunPosition.clone().project(camera);
@@ -262,5 +251,21 @@ describe("desiredOrbitTargetCameraPose for ISS", () => {
       100,
     );
     expect(pose.offset.length()).toBeGreaterThan(EARTH_ORBIT_RADIUS_AU * 0.5);
+  });
+});
+
+describe("earth label viewport diameter", () => {
+  const earthLabelMaxDiameterViewportFraction = 0.1;
+
+  it("shows the label when Earth is far away (diameter under 10%)", () => {
+    const earthRadius = 0.001;
+    const earthCenter = new THREE.Vector3(0, 0, 0);
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.0001, 100);
+    camera.position.set(0, 0, EARTH_ORBIT_RADIUS_AU);
+    camera.lookAt(earthCenter);
+    camera.updateMatrixWorld(true);
+
+    const diameterViewportFraction = 2 * projectedSphereNdcRadius(camera, earthCenter, earthRadius);
+    expect(diameterViewportFraction).toBeLessThan(earthLabelMaxDiameterViewportFraction);
   });
 });
