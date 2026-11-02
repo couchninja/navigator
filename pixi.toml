@@ -35,6 +35,7 @@ bluetooth-on = "sudo systemctl enable --now bluetooth"
 # Does survice reboot
 wifi-off = "sudo nmcli radio wifi off"
 wifi-on = "sudo nmcli radio wifi on"
+wifi-restart = "bash systemd/restart-wifi.sh"
 
 wifi-list = "nmcli -f NAME,UUID,TYPE,DEVICE,STATE,AUTOCONNECT,AUTOCONNECT-PRIORITY connection"
 lcd-test = "python tests/lcd_test_main.py"
