@@ -202,9 +202,7 @@ async def connect_and_calibrate(
             if hub is None:
                 status.hub = "disconnected"
                 try:
-                    hub = await hub_stack.enter_async_context(
-                        connected_hub(program, panel_status=status, stop=stop)
-                    )
+                    hub = await hub_stack.enter_async_context(connected_hub(program, panel_status=status, stop=stop))
                 except ShutdownRequested:
                     raise
                 except RECOVERABLE_ERRORS as exc:
