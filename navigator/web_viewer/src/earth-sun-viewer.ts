@@ -148,8 +148,8 @@ function createBodyVisual(body: SceneBody): THREE.Object3D {
   );
 }
 
-const ARROW_HEAD_LENGTH_FRACTION = 0.1;
-const ARROW_HEAD_WIDTH_EARTH_RADII = 0.3;
+const ARROW_HEAD_LENGTH_FRACTION = 0.2;
+const ARROW_HEAD_WIDTH_EARTH_RADII = 0.8;
 const ARROW_SHAFT_WIDTH_EARTH_RADII = 0.14;
 const ARROW_OCCLUDED_OPACITY = 0.45;
 /** Temporary: set true to draw the faded behind-geometry arrow pass. */

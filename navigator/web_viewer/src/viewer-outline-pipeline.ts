@@ -23,7 +23,7 @@ import { float, pass, uniform } from "three/tsl";
 import { outline } from "three/addons/tsl/display/OutlineNode.js";
 import { createArrowCoverageMask } from "./arrow-coverage-mask";
 
-const ARROW_OUTLINE_EDGE_STRENGTH = 1;
+const ARROW_OUTLINE_EDGE_STRENGTH = 1.5;
 const ARROW_OUTLINE_EDGE_THICKNESS = 0.4;
 
 const BODY_OUTLINE_EDGE_STRENGTH = 1;
