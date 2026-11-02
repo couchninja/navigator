@@ -256,6 +256,14 @@ export function startEarthSunViewer(mount: HTMLElement): EarthSunViewer {
     viewer.setParametricOrbitsVisible(sidebarParametricOrbits.checked);
   }
 
+  const sidebarIdleCamera = document.getElementById("idle-camera-infinity-control");
+  if (sidebarIdleCamera instanceof HTMLInputElement) {
+    sidebarIdleCamera.addEventListener("change", () => {
+      viewer.setIdleCameraInfinityEnabled(sidebarIdleCamera.checked);
+    });
+    viewer.setIdleCameraInfinityEnabled(sidebarIdleCamera.checked);
+  }
+
   window.dispatchEvent(new CustomEvent("earth-sun-viewer-ready", { detail: viewer }));
 
   return viewer;

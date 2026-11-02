@@ -57,6 +57,7 @@ export function tweenCameraToOrbitPose(
   end: OrbitCameraPose,
   onUpdate: () => void,
   durationMs = CAMERA_TARGET_ORBIT_MS,
+  onComplete: (() => void) | null = null,
 ): CameraOrbitTweenHandle {
   const startDistance = start.offset.length();
   const endDistance = end.offset.length();
@@ -89,6 +90,7 @@ export function tweenCameraToOrbitPose(
       syncOrbitControlsUpBasis(controls);
       controls.update();
       controls.enabled = true;
+      onComplete?.();
     })
     .onStop(() => {
       syncOrbitControlsUpBasis(controls);
@@ -108,7 +110,7 @@ export function updateCameraTargetTweens(timeMs: number): void {
   cameraTweenGroup.update(timeMs);
 }
 
-function syncOrbitControlsUpBasis(controls: OrbitControls): void {
+export function syncOrbitControlsUpBasis(controls: OrbitControls): void {
   const internals = controls as OrbitControlsWithUpBasis;
   internals._quat.setFromUnitVectors(controls.object.up, orbitControlsWorldUp);
   internals._quatInverse.copy(internals._quat).invert();

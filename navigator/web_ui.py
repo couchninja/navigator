@@ -407,6 +407,10 @@ __TARGET_BUTTONS__
       <input type="checkbox" id="parametric-orbit-lines-control" checked />
       Keplerian / TLE orbit lines
     </label>
+    <label class="viewer-option">
+      <input type="checkbox" id="idle-camera-infinity-control" checked />
+      Idle camera animation
+    </label>
   </div>
   <details class="logs-panel">
     <summary class="logs-label">Log</summary>

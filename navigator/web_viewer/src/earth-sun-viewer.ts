@@ -22,7 +22,15 @@ import {
   SKYBOX_FADE_SPAN_ORBIT_RADIUS_MULTIPLE,
 } from "./scene-viewer-constants";
 import {
+  IDLE_INFINITY_AMPLITUDE_RAD,
+  IDLE_INFINITY_PERIOD_MS,
+  idleInfinityRampFactor,
+  infinityIdleCameraOffset,
+  infinityIdleCameraUp,
+} from "./camera-idle-infinity";
+import {
   cameraOrbitTweenActive,
+  syncOrbitControlsUpBasis,
   tweenCameraToOrbitPose,
   updateCameraTargetTweens,
   type CameraOrbitTweenHandle,
@@ -55,6 +63,8 @@ const _labelWorldAnchor = new THREE.Vector3();
 const _cameraScreenDown = new THREE.Vector3();
 const _galacticCenterWorld = new THREE.Vector3();
 const _orbitPivot = new THREE.Vector3();
+const _idleCameraOffset = new THREE.Vector3();
+const IDLE_INFINITY_PHASE_RAD_PER_MS = (2 * Math.PI) / IDLE_INFINITY_PERIOD_MS;
 const SELF_LIT_BODY_EMISSIVE_INTENSITY: Partial<Record<string, number>> = {
   sun: 0.65,
   observer: 0.1,
@@ -245,6 +255,14 @@ export class EarthSunViewer {
   private nextSimCameraUpdateMs = 0;
   private pendingSimMinuteCamera = false;
   private sceneRefreshHook: (() => void) | null = null;
+  private idleCameraInfinityEnabled = true;
+  private idleOrbitBaseCaptured = false;
+  private readonly idleOrbitBaseDirection = new THREE.Vector3();
+  private readonly idleOrbitBaseUp = new THREE.Vector3();
+  private idleOrbitBaseDistance = 0;
+  private idleOrbitPhaseRad = 0;
+  private idleOrbitLastFrameMs = 0;
+  private idleOrbitSessionStartMs = 0;
 
   constructor(mount: HTMLElement) {
     this.root = document.createElement("div");
@@ -298,6 +316,7 @@ export class EarthSunViewer {
     this.controls.addEventListener("start", () => {
       if (!cameraOrbitTweenActive()) {
         this.userControlsCamera = true;
+        this.invalidateIdleOrbitBase();
       }
     });
     this.controls.addEventListener("change", () => {
@@ -357,7 +376,22 @@ export class EarthSunViewer {
 
   releaseUserCameraControl(): void {
     this.userControlsCamera = false;
+    this.invalidateIdleOrbitBase();
     this.alignNextSimCameraUpdateMs();
+  }
+
+  setIdleCameraInfinityEnabled(enabled: boolean): void {
+    this.idleCameraInfinityEnabled = enabled;
+    if (enabled) {
+      this.pendingSimMinuteCamera = false;
+    } else {
+      this.invalidateIdleOrbitBase();
+      this.alignNextSimCameraUpdateMs();
+    }
+    const sidebarInput = document.getElementById("idle-camera-infinity-control");
+    if (sidebarInput instanceof HTMLInputElement && sidebarInput.checked !== enabled) {
+      sidebarInput.checked = enabled;
+    }
   }
 
   dispose(): void {
@@ -446,7 +480,12 @@ export class EarthSunViewer {
     if (this.pendingPointingTargetCamera && this.pointingTarget !== "") {
       this.pendingPointingTargetCamera = false;
       this.animateCameraForPointingTarget(snapshot);
-    } else if (this.pendingSimMinuteCamera && !this.userControlsCamera && this.pointingTarget !== "") {
+    } else if (
+      this.pendingSimMinuteCamera &&
+      !this.userControlsCamera &&
+      !this.idleCameraInfinityEnabled &&
+      this.pointingTarget !== ""
+    ) {
       this.pendingSimMinuteCamera = false;
       this.animateCameraForPointingTarget(snapshot);
     }
@@ -570,8 +609,95 @@ export class EarthSunViewer {
     this.nextSimCameraUpdateMs = Math.floor(simMs / SIM_MINUTE_MS) * SIM_MINUTE_MS + SIM_MINUTE_MS;
   }
 
+  private invalidateIdleOrbitBase(): void {
+    this.idleOrbitBaseCaptured = false;
+    this.idleOrbitLastFrameMs = 0;
+    this.idleOrbitPhaseRad = 0;
+    this.idleOrbitSessionStartMs = 0;
+  }
+
+  private captureIdleOrbitBase(): void {
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    this.idleOrbitBaseDistance = offset.length();
+    if (this.idleOrbitBaseDistance < 1e-14) {
+      this.idleOrbitBaseDistance = this.defaultCameraDistance || 1;
+      this.idleOrbitBaseDirection.copy(this.defaultCameraOffset).normalize();
+    } else {
+      this.idleOrbitBaseDirection.copy(offset).normalize();
+    }
+    this.idleOrbitBaseUp.copy(this.camera.up).normalize();
+    this.idleOrbitPhaseRad = 0;
+    this.idleOrbitLastFrameMs = 0;
+    this.idleOrbitSessionStartMs = 0;
+    this.idleOrbitBaseCaptured = true;
+  }
+
+  private idleInfinityMayRun(): boolean {
+    return (
+      this.idleCameraInfinityEnabled &&
+      !this.userControlsCamera &&
+      !cameraOrbitTweenActive() &&
+      !this.pendingPointingTargetCamera &&
+      this.pointingTarget !== "" &&
+      this.sceneSnapshot !== null
+    );
+  }
+
+  private idleInfinityActive(): boolean {
+    return this.idleInfinityMayRun() && this.idleOrbitBaseCaptured;
+  }
+
+  private tickIdleInfinityCamera(now: number): void {
+    if (!this.idleInfinityMayRun()) {
+      this.idleOrbitLastFrameMs = 0;
+      return;
+    }
+    if (!this.idleOrbitBaseCaptured) {
+      this.captureIdleOrbitBase();
+    }
+    if (this.idleOrbitSessionStartMs <= 0) {
+      this.idleOrbitSessionStartMs = now;
+    }
+    const sessionElapsedMs = now - this.idleOrbitSessionStartMs;
+    const ramp = idleInfinityRampFactor(sessionElapsedMs);
+    if (this.idleOrbitLastFrameMs > 0) {
+      const deltaMs = now - this.idleOrbitLastFrameMs;
+      const rampMid = idleInfinityRampFactor(sessionElapsedMs - deltaMs * 0.5);
+      this.idleOrbitPhaseRad += deltaMs * IDLE_INFINITY_PHASE_RAD_PER_MS * rampMid;
+    }
+    this.idleOrbitLastFrameMs = now;
+
+    const amplitudeRad = IDLE_INFINITY_AMPLITUDE_RAD * ramp;
+    infinityIdleCameraOffset(
+      this.idleOrbitBaseDirection,
+      this.idleOrbitBaseUp,
+      this.idleOrbitBaseDistance,
+      this.idleOrbitPhaseRad,
+      amplitudeRad,
+      _idleCameraOffset,
+    );
+    this.camera.position.copy(this.controls.target).add(_idleCameraOffset);
+    this.camera.up.copy(
+      infinityIdleCameraUp(
+        this.idleOrbitBaseDirection,
+        this.idleOrbitBaseUp,
+        this.idleOrbitPhaseRad,
+        amplitudeRad,
+        _idleCameraOffset,
+      ),
+    );
+    syncOrbitControlsUpBasis(this.controls);
+    this.controls.update();
+    this.cameraMotionUntil = now + VIEWER_FRAME_MS;
+  }
+
   private tickSimMinuteCamera(): void {
-    if (this.userControlsCamera || this.pointingTarget === "" || this.sceneSnapshot === null) {
+    if (
+      this.idleCameraInfinityEnabled ||
+      this.userControlsCamera ||
+      this.pointingTarget === "" ||
+      this.sceneSnapshot === null
+    ) {
       return;
     }
     if (cameraOrbitTweenActive()) {
@@ -957,13 +1083,14 @@ export class EarthSunViewer {
 
   private animate = (): void => {
     this.animationId = requestAnimationFrame(this.animate);
-    updateCameraTargetTweens(performance.now());
-    if (!cameraOrbitTweenActive()) {
+    const now = performance.now();
+    updateCameraTargetTweens(now);
+    this.tickIdleInfinityCamera(now);
+    if (!cameraOrbitTweenActive() && !this.idleInfinityActive()) {
       this.controls.update();
     }
     this.updateLabels();
     this.labelRenderer.render(this.scene, this.camera);
-    const now = performance.now();
     if (now - this.lastRenderTime < this.renderIntervalMs(now)) {
       return;
     }
@@ -1011,6 +1138,7 @@ export class EarthSunViewer {
   }
 
   private animateCameraForPointingTarget(snapshot: SceneSnapshot): void {
+    this.invalidateIdleOrbitBase();
     this.cameraOrbitTween?.stop();
     this.cameraOrbitTween = null;
 
@@ -1030,12 +1158,23 @@ export class EarthSunViewer {
       this.controls.maxDistance,
     );
     this.cameraOrbitTweenUntil = performance.now() + 1200;
-    this.cameraOrbitTween = tweenCameraToOrbitPose(this.camera, this.controls, _orbitPivot, startPose, endPose, () => {
-      this.cameraMotionUntil = performance.now() + 250;
-      this.clampCameraDistance();
-      this.syncClipPlanes();
-      this.layoutArrows();
-      this.layoutSunGlow();
-    });
+    this.cameraOrbitTween = tweenCameraToOrbitPose(
+      this.camera,
+      this.controls,
+      _orbitPivot,
+      startPose,
+      endPose,
+      () => {
+        this.cameraMotionUntil = performance.now() + 250;
+        this.clampCameraDistance();
+        this.syncClipPlanes();
+        this.layoutArrows();
+        this.layoutSunGlow();
+      },
+      undefined,
+      () => {
+        this.captureIdleOrbitBase();
+      },
+    );
   }
 }
