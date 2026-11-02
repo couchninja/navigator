@@ -40,6 +40,7 @@ import { createConstellationSky, opacityFadeOutAboveThreshold, skyOpacityForCame
 import { createFlatArrowGroup, disposeFlatArrowGroup, orientFlatArrow } from "./billboard-arrow";
 import { isPointingArrowName, pointingArrowName } from "./pointing-arrow";
 import { createEarthMesh } from "./earth-mesh";
+import { createIssMesh, disposeIssMesh } from "./iss-mesh";
 import { createSunGlowSprite, disposeSunGlowSprite, layoutSunGlow } from "./sun-glow";
 import { sampleKeplerianOrbitPoints, type KeplerianOrbitParams } from "./keplerian-orbit";
 import { heliocentricOriginForParametricOrbit, parametricOrbitSampleCount } from "./orbit-path-samples";
@@ -111,6 +112,40 @@ function createSphereMesh(radius: number, color: Rgb, emissiveIntensity = 0, sun
     ...(sunGlowDepthBias ? { polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 } : {}),
   });
   return new THREE.Mesh(geometry, material);
+}
+
+function isReplacableBodyVisual(child: THREE.Object3D): boolean {
+  return (
+    child instanceof THREE.Mesh ||
+    (child instanceof THREE.Sprite && child.userData.sunGlow === true) ||
+    (child instanceof THREE.Group && child.userData.issStation === true)
+  );
+}
+
+function disposeReplacableBodyVisual(visual: THREE.Object3D): void {
+  if (visual instanceof THREE.Mesh) {
+    visual.geometry.dispose();
+    (visual.material as THREE.Material).dispose();
+  } else if (visual instanceof THREE.Sprite && visual.userData.sunGlow === true) {
+    disposeSunGlowSprite(visual);
+  } else if (visual instanceof THREE.Group && visual.userData.issStation === true) {
+    disposeIssMesh(visual);
+  }
+}
+
+function createBodyVisual(body: SceneBody): THREE.Object3D {
+  if (body.name === "earth") {
+    return createEarthMesh(body.radius);
+  }
+  if (body.name === "iss") {
+    return createIssMesh(body.radius, body.color, SELF_LIT_BODY_EMISSIVE_INTENSITY.iss ?? 0);
+  }
+  return createSphereMesh(
+    body.radius,
+    body.color,
+    SELF_LIT_BODY_EMISSIVE_INTENSITY[body.name] ?? 0,
+    body.name === "sun",
+  );
 }
 
 const ARROW_HEAD_LENGTH_FRACTION = 0.1;
@@ -513,30 +548,13 @@ export class EarthSunViewer {
       this.bodies.set(body.name, entry);
     }
 
-    if (Math.abs(entry.radius - body.radius) > entry.radius * 1e-6) {
-      entry.root.children
-        .filter(
-          (child) => child instanceof THREE.Mesh || (child instanceof THREE.Sprite && child.userData.sunGlow === true),
-        )
-        .forEach((visual) => {
-          entry.root.remove(visual);
-          if (visual instanceof THREE.Mesh) {
-            visual.geometry.dispose();
-            (visual.material as THREE.Material).dispose();
-          } else if (visual instanceof THREE.Sprite) {
-            disposeSunGlowSprite(visual);
-          }
-        });
-      const mesh =
-        body.name === "earth"
-          ? createEarthMesh(body.radius)
-          : createSphereMesh(
-              body.radius,
-              body.color,
-              SELF_LIT_BODY_EMISSIVE_INTENSITY[body.name] ?? 0,
-              body.name === "sun",
-            );
-      entry.root.add(mesh);
+    const missingVisual = !entry.root.children.some(isReplacableBodyVisual);
+    if (missingVisual || Math.abs(entry.radius - body.radius) > entry.radius * 1e-6) {
+      entry.root.children.filter(isReplacableBodyVisual).forEach((visual) => {
+        entry.root.remove(visual);
+        disposeReplacableBodyVisual(visual);
+      });
+      entry.root.add(createBodyVisual(body));
       entry.radius = body.radius;
     }
 
